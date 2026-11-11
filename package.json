@@ -1,0 +1,31 @@
+{
+  "name": "focusforge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FocusForge — Student study planner and productivity tracker monorepo",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev:web",
+    "dev:web": "npm --prefix apps/web run dev",
+    "dev:api": "npm --prefix apps/api run dev",
+    "build": "npm --prefix packages/shared run build && npm --prefix apps/web run build && npm --prefix apps/api run build",
+    "build:web": "npm run build --workspace=@focusforge/shared && npm run build --workspace=web",
+    "build:api": "npm run build --workspace=@focusforge/shared && npm run build --workspace=api",
+    "test": "npm --prefix apps/web run test && npm --prefix apps/api run test",
+    "test:e2e": "npm --prefix apps/web run test:e2e",
+    "lint": "npm --prefix apps/web run lint && npm --prefix apps/api run lint",
+    "typecheck": "npm --prefix packages/shared run typecheck && npm --prefix apps/web run typecheck && npm --prefix apps/api run typecheck"
+  },
+  "keywords": [
+    "study-planner",
+    "pomodoro",
+    "productivity",
+    "habits",
+    "student"
+  ],
+  "author": "",
+  "license": "ISC"
+}
