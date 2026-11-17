@@ -1,7 +1,26 @@
+import { Suspense } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
 import { FlameKindling, Sun, Moon } from 'lucide-react';
 import { useThemeStore } from '../../stores/useThemeStore';
 import { ToastContainer } from '../ui/Toast';
+
+function AuthFallback() {
+  return (
+    <div
+      className="space-y-4 animate-pulse py-4"
+      role="status"
+      aria-label="Loading authentication form"
+    >
+      <div className="h-6 bg-surface-2 rounded-input w-2/3 mx-auto" />
+      <div className="h-4 bg-surface-2 rounded-input w-1/2 mx-auto" />
+      <div className="space-y-3 pt-4">
+        <div className="h-10 bg-surface-2 rounded-input w-full" />
+        <div className="h-10 bg-surface-2 rounded-input w-full" />
+        <div className="h-10 bg-primary/30 rounded-button w-full" />
+      </div>
+    </div>
+  );
+}
 
 export function AuthLayout() {
   const { theme, resolvedTheme, setTheme } = useThemeStore();
@@ -59,7 +78,9 @@ export function AuthLayout() {
 
         {/* Auth Card with Soft Glow */}
         <div className="bg-surface/90 backdrop-blur-xl border border-border shadow-modal rounded-card p-6 sm:p-8 transition-all">
-          <Outlet />
+          <Suspense fallback={<AuthFallback />}>
+            <Outlet />
+          </Suspense>
         </div>
 
         {/* Guest exploration link */}
