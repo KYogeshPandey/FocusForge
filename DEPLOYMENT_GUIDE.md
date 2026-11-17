@@ -1,4 +1,4 @@
-﻿# FocusForge Production Deployment Guide
+# FocusForge Production Deployment Guide
 
 **Target Architecture:**
 * **Frontend:** Vercel (React 18 + Vite SPA + Tailwind CSS)
@@ -76,9 +76,8 @@ FocusForge includes `render.yaml` at the repository root and `apps/api/render.ya
    - **Runtime:** `Node`
    - **Build Command:**
      ```bash
-     npm install && npm run build:api
+     npm ci --include=dev && npm run build --workspace=@focusforge/shared && npm run build --workspace=api
      ```
-     *(Or: `npm install && npm run build --workspace=@focusforge/shared && npm run build --workspace=api`)*
    - **Start Command:**
      ```bash
      node apps/api/dist/server.js

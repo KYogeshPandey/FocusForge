@@ -51,7 +51,7 @@ This guide details the step-by-step procedure for deploying FocusForge to produc
 - **Runtime:** `Node`
 - **Build Command:**
   ```bash
-  npm install && npm run build --workspace=@focusforge/shared && npm run build --workspace=api
+  npm ci --include=dev && npm run build --workspace=@focusforge/shared && npm run build --workspace=api
   ```
 - **Start Command:**
   ```bash
