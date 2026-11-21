@@ -232,4 +232,72 @@ describe('Resource Endpoints & Business Logic', () => {
       });
     expect(invalidRes.status).toBe(422);
   });
+
+  it('manages study sessions via /study-sessions and backward-compatible /sessions alias', async () => {
+    const user = await createTestUser('StudySessionTester', 'studysession@test.com', 'password123');
+    const auth = `Bearer ${user.accessToken}`;
+
+    // 1. Create study session via primary /study-sessions route
+    const createRes = await request(app)
+      .post('/api/v1/study-sessions')
+      .set('Authorization', auth)
+      .send({
+        title: 'Distributed Systems Raft Consensus',
+        subject: 'Computer Science',
+        date: '2026-11-25',
+        startTime: '10:00',
+        durationMinutes: 60,
+      });
+    expect(createRes.status).toBe(201);
+    expect(createRes.body.success).toBe(true);
+    const sessionId = createRes.body.data.id;
+    expect(sessionId).toBeDefined();
+
+    // 2. List study sessions via /study-sessions
+    const listRes = await request(app)
+      .get('/api/v1/study-sessions?date=2026-11-25')
+      .set('Authorization', auth);
+    expect(listRes.status).toBe(200);
+    expect(listRes.body.data).toHaveLength(1);
+    expect(listRes.body.data[0].title).toBe('Distributed Systems Raft Consensus');
+
+    // 3. Fetch via primary /study-sessions/:id route
+    const getRes = await request(app)
+      .get(`/api/v1/study-sessions/${sessionId}`)
+      .set('Authorization', auth);
+    expect(getRes.status).toBe(200);
+    expect(getRes.body.data.id).toBe(sessionId);
+
+    // 4. Fetch via backward-compatible /sessions/:id alias route
+    const aliasGetRes = await request(app)
+      .get(`/api/v1/sessions/${sessionId}`)
+      .set('Authorization', auth);
+    expect(aliasGetRes.status).toBe(200);
+    expect(aliasGetRes.body.data.id).toBe(sessionId);
+
+    // 5. Update via /study-sessions/:id
+    const updateRes = await request(app)
+      .patch(`/api/v1/study-sessions/${sessionId}`)
+      .set('Authorization', auth)
+      .send({ status: 'completed' });
+    expect(updateRes.status).toBe(200);
+    expect(updateRes.body.data.status).toBe('completed');
+
+    // 6. Delete via /study-sessions/:id
+    const deleteRes = await request(app)
+      .delete(`/api/v1/study-sessions/${sessionId}`)
+      .set('Authorization', auth);
+    expect(deleteRes.status).toBe(204);
+
+    // 7. Verify 404 on both primary and alias routes
+    const notFoundPrimary = await request(app)
+      .get(`/api/v1/study-sessions/${sessionId}`)
+      .set('Authorization', auth);
+    expect(notFoundPrimary.status).toBe(404);
+
+    const notFoundAlias = await request(app)
+      .get(`/api/v1/sessions/${sessionId}`)
+      .set('Authorization', auth);
+    expect(notFoundAlias.status).toBe(404);
+  });
 });

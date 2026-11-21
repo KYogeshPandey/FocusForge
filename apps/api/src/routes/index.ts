@@ -14,7 +14,8 @@ const apiV1Router = Router();
 apiV1Router.use('/auth', authRoutes);
 apiV1Router.use('/tasks', taskRoutes);
 apiV1Router.use('/habits', habitRoutes);
-apiV1Router.use('/sessions', studySessionRoutes);
+apiV1Router.use('/study-sessions', studySessionRoutes);
+apiV1Router.use('/sessions', studySessionRoutes); // backward-compatible alias
 apiV1Router.use('/focus-sessions', focusSessionRoutes);
 apiV1Router.use('/goals', goalRoutes);
 apiV1Router.use('/analytics', analyticsRoutes);

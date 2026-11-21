@@ -226,6 +226,30 @@ describe('API Client (Native Fetch Wrapper)', () => {
     vi.resetModules();
   });
 
+  it('supports relative VITE_API_URL for same-origin proxy and strips trailing slashes', async () => {
+    vi.resetModules();
+    vi.stubEnv('VITE_API_URL', '/api/v1/');
+
+    const relativeModule = await import('../src/services/api/apiClient');
+    expect(relativeModule.BASE_URL).toBe('/api/v1');
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ success: true, data: [] }),
+    } as unknown as Response);
+
+    await relativeModule.apiClient.get('/tasks');
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/v1/tasks',
+      expect.objectContaining({ method: 'GET', credentials: 'include' })
+    );
+
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
   it('falls back to default localhost URL when VITE_API_URL is absent', async () => {
     vi.resetModules();
     vi.unstubAllEnvs();
