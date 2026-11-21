@@ -20,10 +20,14 @@ export function createApp(): Application {
   // 2. Security HTTP headers
   app.use(helmet());
 
-  // 3. CORS configuration
+  // 3. CORS configuration (supports single or comma-separated allowed origins)
+  const allowedOrigins = env.CLIENT_ORIGIN.split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+
   app.use(
     cors({
-      origin: env.CLIENT_ORIGIN,
+      origin: allowedOrigins,
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],

@@ -18,7 +18,58 @@ const envSchema = z.object({
       (uri) => uri.startsWith('mongodb://') || uri.startsWith('mongodb+srv://'),
       'MONGODB_URI must start with mongodb:// or mongodb+srv://'
     ),
-  CLIENT_ORIGIN: z.string().default('http://localhost:5173'),
+  CLIENT_ORIGIN: z
+    .string()
+    .default('http://localhost:5173')
+    .superRefine((val, ctx) => {
+      const parts = val.split(',');
+      for (const raw of parts) {
+        const trimmed = raw.trim();
+        if (!trimmed) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'CLIENT_ORIGIN must not contain empty origin entries',
+          });
+          return;
+        }
+        try {
+          const url = new URL(trimmed);
+          if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `CLIENT_ORIGIN entry "${trimmed}" must use http:// or https://`,
+            });
+            return;
+          }
+          if (url.username || url.password) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `CLIENT_ORIGIN entry "${trimmed}" must not contain credentials`,
+            });
+            return;
+          }
+          if (url.origin !== trimmed) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `CLIENT_ORIGIN entry "${trimmed}" must be a pure origin without path, query, or fragment (expected "${url.origin}")`,
+            });
+            return;
+          }
+        } catch {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `CLIENT_ORIGIN entry "${trimmed}" is not a valid URL`,
+          });
+          return;
+        }
+      }
+    })
+    .transform((val) =>
+      val
+        .split(',')
+        .map((s) => s.trim())
+        .join(',')
+    ),
   JWT_ACCESS_SECRET: z.string().min(16, 'JWT_ACCESS_SECRET must be at least 16 characters long'),
   JWT_REFRESH_SECRET: z.string().min(16, 'JWT_REFRESH_SECRET must be at least 16 characters long'),
   ACCESS_TOKEN_TTL: z.string().default('15m'),

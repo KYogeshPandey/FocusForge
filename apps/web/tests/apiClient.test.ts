@@ -5,6 +5,7 @@ import {
   getAccessToken,
   setOnAuthFailure,
   silentRefreshToken,
+  BASE_URL,
 } from '../src/services/api/apiClient';
 import { ApiError } from '../src/services/api/apiError';
 
@@ -18,6 +19,7 @@ describe('API Client (Native Fetch Wrapper)', () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+    vi.unstubAllEnvs();
   });
 
   it('unwraps success envelope and returns data directly', async () => {
@@ -210,6 +212,42 @@ describe('API Client (Native Fetch Wrapper)', () => {
 
     await expect(apiClient.get('/tasks')).rejects.toThrow(
       'Too many requests. Please wait a moment and try again shortly.'
+    );
+  });
+
+  it('initializes BASE_URL with custom VITE_API_URL when configured', async () => {
+    vi.resetModules();
+    vi.stubEnv('VITE_API_URL', 'https://focusforge-api-68ro.onrender.com/api/v1');
+
+    const customModule = await import('../src/services/api/apiClient');
+    expect(customModule.BASE_URL).toBe('https://focusforge-api-68ro.onrender.com/api/v1');
+
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it('falls back to default localhost URL when VITE_API_URL is absent', async () => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+
+    const defaultModule = await import('../src/services/api/apiClient');
+    expect(defaultModule.BASE_URL).toBe('http://localhost:5000/api/v1');
+
+    vi.resetModules();
+  });
+
+  it('constructs endpoint paths correctly with BASE_URL', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ success: true, data: { status: 'healthy' } }),
+    } as unknown as Response);
+
+    await apiClient.get('/health');
+    expect(global.fetch).toHaveBeenCalledWith(
+      `${BASE_URL}/health`,
+      expect.objectContaining({ method: 'GET' })
     );
   });
 });

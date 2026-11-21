@@ -2,9 +2,7 @@ import { ApiError } from './apiError';
 
 const DEFAULT_API_URL = 'http://localhost:5000/api/v1';
 
-export const BASE_URL: string =
-  ((import.meta as unknown as { env?: Record<string, string | undefined> })?.env?.VITE_API_URL) ||
-  DEFAULT_API_URL;
+export const BASE_URL: string = import.meta.env.VITE_API_URL || DEFAULT_API_URL;
 
 // In-memory access token storage (never placed in localStorage / sessionStorage)
 let inMemoryAccessToken: string | null = null;
