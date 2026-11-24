@@ -21,10 +21,11 @@ export class AuthController {
     const input: RegisterInput = req.body;
     const result = await authService.register(input);
 
+    const remainingMs = Math.max(0, result.expiresAt.getTime() - Date.now());
     res.cookie(
       REFRESH_COOKIE_NAME,
       result.refreshTokenString,
-      getRefreshTokenCookieOptions()
+      getRefreshTokenCookieOptions(remainingMs)
     );
 
     sendSuccess(
@@ -41,10 +42,11 @@ export class AuthController {
     const input: LoginInput = req.body;
     const result = await authService.login(input);
 
+    const remainingMs = Math.max(0, result.expiresAt.getTime() - Date.now());
     res.cookie(
       REFRESH_COOKIE_NAME,
       result.refreshTokenString,
-      getRefreshTokenCookieOptions()
+      getRefreshTokenCookieOptions(remainingMs)
     );
 
     sendSuccess(res, {
@@ -57,10 +59,12 @@ export class AuthController {
     const token = req.cookies?.[REFRESH_COOKIE_NAME];
     const result = await authService.refresh(token);
 
+    // Check 3: Cookie maxAge must reflect the remaining server-side session lifetime, not blindly reset to 72h
+    const remainingMs = Math.max(0, result.expiresAt.getTime() - Date.now());
     res.cookie(
       REFRESH_COOKIE_NAME,
       result.newRefreshTokenString,
-      getRefreshTokenCookieOptions()
+      getRefreshTokenCookieOptions(remainingMs)
     );
 
     sendSuccess(res, {
@@ -78,6 +82,23 @@ export class AuthController {
     });
 
     sendSuccess(res, { message: 'Successfully logged out' });
+  }
+
+  async recordActivity(req: Request, res: Response): Promise<void> {
+    const token = req.cookies?.[REFRESH_COOKIE_NAME];
+    const userId = req.user?.id;
+    const result = await authService.recordActivity(token, userId);
+
+    // Only update cookie if token was not concurrently rotated (avoids clobbering rotated cookie)
+    if (result && token && !result.isRotated) {
+      const remainingMs = Math.max(0, result.expiresAt.getTime() - Date.now());
+      res.cookie(
+        REFRESH_COOKIE_NAME,
+        token,
+        getRefreshTokenCookieOptions(remainingMs)
+      );
+    }
+    sendSuccess(res, { message: 'Activity recorded' });
   }
 
   async getMe(req: Request, res: Response): Promise<void> {

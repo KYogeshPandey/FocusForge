@@ -1,4 +1,5 @@
 import { ApiError } from './apiError';
+import { isSessionExpiredDueToInactivity, setLastActiveTime } from '../activityTracker';
 
 const DEFAULT_API_URL = 'http://localhost:5000/api/v1';
 
@@ -23,10 +24,32 @@ export function setOnAuthFailure(handler: () => void): void {
   onAuthFailureHandler = handler;
 }
 
+// Cross-tab broadcast channel for token synchronization across tabs
+let clientAuthChannel: BroadcastChannel | null = null;
+if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+  try {
+    clientAuthChannel = new BroadcastChannel('focusforge_auth_channel');
+    clientAuthChannel.addEventListener('message', (event) => {
+      if (event?.data?.type === 'TOKEN_REFRESHED' && typeof event.data.accessToken === 'string') {
+        inMemoryAccessToken = event.data.accessToken;
+      }
+    });
+  } catch (err) {
+    console.warn('BroadcastChannel not available in apiClient:', err);
+  }
+}
+
 // In-flight refresh promise mutex to prevent concurrent refresh stampedes
 let activeRefreshPromise: Promise<string | null> | null = null;
 
 export async function silentRefreshToken(): Promise<string | null> {
+  // If user has been inactive for 72+ hours, refuse to refresh
+  if (isSessionExpiredDueToInactivity()) {
+    setAccessToken(null);
+    if (onAuthFailureHandler) onAuthFailureHandler();
+    return null;
+  }
+
   if (activeRefreshPromise) {
     return activeRefreshPromise;
   }
@@ -51,6 +74,14 @@ export async function silentRefreshToken(): Promise<string | null> {
       if (json?.success && json?.data?.accessToken) {
         const newToken = json.data.accessToken as string;
         setAccessToken(newToken);
+
+        // Broadcast to other open tabs
+        if (clientAuthChannel) {
+          try {
+            clientAuthChannel.postMessage({ type: 'TOKEN_REFRESHED', accessToken: newToken });
+          } catch {}
+        }
+
         return newToken;
       }
 
@@ -118,13 +149,18 @@ export async function apiRequest<T>(endpoint: string, options: RequestOptions = 
     let response = await fetch(url, fetchOptions);
     clearTimeout(timeoutId);
 
-    // Handle 401 Unauthorized for expired access token (except when on /auth/refresh or /auth/login)
-    const isAuthEndpoint =
-      endpoint.includes('/auth/login') ||
-      endpoint.includes('/auth/refresh') ||
-      endpoint.includes('/auth/register');
+    // Handle 401 Unauthorized for expired access token (except when on auth endpoints)
+    const isAuth =
+      endpoint.startsWith('/auth') ||
+      endpoint.startsWith('auth') ||
+      endpoint.includes('/auth/');
 
-    if (response.status === 401 && !skipAuth && !isAuthEndpoint) {
+    // Record user activity timestamp for authenticated non-auth requests
+    if (!skipAuth && inMemoryAccessToken && !isAuth) {
+      setLastActiveTime(Date.now());
+    }
+
+    if (response.status === 401 && !skipAuth && !isAuth) {
       const refreshedToken = await silentRefreshToken();
 
       if (refreshedToken) {

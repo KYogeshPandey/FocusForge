@@ -11,6 +11,7 @@ import {
   generateAccessToken,
   generateRefreshTokenString,
   hashToken,
+  INACTIVITY_TIMEOUT_MS,
 } from '../utils/tokens.js';
 import { AppError } from '../utils/AppError.js';
 import type {
@@ -25,6 +26,7 @@ export interface AuthResult {
   user: UserProfile;
   accessToken: string;
   refreshTokenString: string;
+  expiresAt: Date;
 }
 
 export class AuthService {
@@ -62,22 +64,26 @@ export class AuthService {
       targetMinutesWeekly: 600,
     });
 
-    // Generate tokens
+    // Generate tokens with 72-hour inactivity lifetime
+    const now = Date.now();
     const accessToken = generateAccessToken(user._id.toString());
     const refreshTokenString = generateRefreshTokenString();
     const tokenHash = hashToken(refreshTokenString);
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(now + INACTIVITY_TIMEOUT_MS);
+    const lastActiveAt = new Date(now);
 
     await RefreshToken.create({
       userId: user._id,
       tokenHash,
       expiresAt,
+      lastActiveAt,
     });
 
     return {
       user: user.toJSON() as unknown as UserProfile,
       accessToken,
       refreshTokenString,
+      expiresAt,
     };
   }
 
@@ -96,33 +102,38 @@ export class AuthService {
       throw AppError.unauthorized('Invalid email or password');
     }
 
+    const now = Date.now();
     const accessToken = generateAccessToken(user._id.toString());
     const refreshTokenString = generateRefreshTokenString();
     const tokenHash = hashToken(refreshTokenString);
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(now + INACTIVITY_TIMEOUT_MS);
+    const lastActiveAt = new Date(now);
 
     await RefreshToken.create({
       userId: user._id,
       tokenHash,
       expiresAt,
+      lastActiveAt,
     });
 
     return {
       user: user.toJSON() as unknown as UserProfile,
       accessToken,
       refreshTokenString,
+      expiresAt,
     };
   }
 
   /**
-   * Rotates refresh token with reuse detection
+   * Rotates refresh token with reuse detection while preserving session inactivity deadline
    */
-  async refresh(rawRefreshToken?: string): Promise<{ accessToken: string; newRefreshTokenString: string }> {
+  async refresh(rawRefreshToken?: string): Promise<{ accessToken: string; newRefreshTokenString: string; expiresAt: Date }> {
     if (!rawRefreshToken) {
       throw AppError.unauthorized('Refresh token is required');
     }
 
     const presentedHash = hashToken(rawRefreshToken);
+    const now = new Date();
     const tokenRecord = await RefreshToken.findOne({ tokenHash: presentedHash });
 
     if (!tokenRecord) {
@@ -138,16 +149,19 @@ export class AuthService {
       throw AppError.unauthorized('Refresh token reuse detected. Please log in again.');
     }
 
-    if (tokenRecord.expiresAt.getTime() < Date.now()) {
-      throw AppError.unauthorized('Refresh token has expired');
+    if (tokenRecord.expiresAt.getTime() < now.getTime()) {
+      throw AppError.unauthorized('Session expired due to 3 days of inactivity');
     }
 
     // Revoke old token and rotate
+    // Notice: automatic refresh preserves the session's expiresAt and lastActiveAt;
+    // it does NOT reset the 72-hour inactivity countdown without user activity.
     const newRefreshTokenString = generateRefreshTokenString();
     const newHash = hashToken(newRefreshTokenString);
-    const newExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const newExpiresAt = tokenRecord.expiresAt;
+    const newLastActiveAt = tokenRecord.lastActiveAt || tokenRecord.createdAt;
 
-    tokenRecord.revokedAt = new Date();
+    tokenRecord.revokedAt = now;
     tokenRecord.replacedBy = newHash;
     await tokenRecord.save();
 
@@ -155,6 +169,7 @@ export class AuthService {
       userId: tokenRecord.userId,
       tokenHash: newHash,
       expiresAt: newExpiresAt,
+      lastActiveAt: newLastActiveAt,
     });
 
     const accessToken = generateAccessToken(tokenRecord.userId.toString());
@@ -162,7 +177,118 @@ export class AuthService {
     return {
       accessToken,
       newRefreshTokenString,
+      expiresAt: newExpiresAt,
     };
+  }
+
+  /**
+   * Records user activity atomically, resetting the 72-hour inactivity countdown.
+   * Handles concurrent rotation races safely without disabling reuse detection.
+   */
+  async recordActivity(rawRefreshToken?: string, userId?: string): Promise<{ expiresAt: Date; isRotated: boolean } | null> {
+    if (!rawRefreshToken && !userId) {
+      throw AppError.unauthorized('Authentication session required');
+    }
+
+    const now = new Date();
+    const newExpiresAt = new Date(now.getTime() + INACTIVITY_TIMEOUT_MS);
+
+    if (rawRefreshToken) {
+      const presentedHash = hashToken(rawRefreshToken);
+
+      // 1. Atomic update on active (unrevoked) token that hasn't expired
+      const activeRecord = await RefreshToken.findOneAndUpdate(
+        {
+          tokenHash: presentedHash,
+          revokedAt: null,
+          expiresAt: { $gt: now },
+        },
+        {
+          $set: {
+            lastActiveAt: now,
+            expiresAt: newExpiresAt,
+          },
+        },
+        { new: true }
+      );
+
+      if (activeRecord) {
+        return { expiresAt: newExpiresAt, isRotated: false };
+      }
+
+      // 2. Check why active token was not updated:
+      const existing = await RefreshToken.findOne({ tokenHash: presentedHash });
+      if (!existing) {
+        throw AppError.unauthorized('Session not found or expired');
+      }
+
+      // Check 1: Expired sessions must NEVER be extended by activity
+      if (existing.expiresAt.getTime() <= now.getTime()) {
+        throw AppError.unauthorized('Session expired due to 3 days of inactivity');
+      }
+
+      // Check 2: If revoked, check if it was rotated concurrently (within 30s grace)
+      if (existing.revokedAt && existing.replacedBy) {
+        const gracePeriodMs = 30 * 1000;
+        const timeSinceRevoke = now.getTime() - existing.revokedAt.getTime();
+
+        if (timeSinceRevoke < gracePeriodMs) {
+          // Concurrently rotated! Atomically extend the replacement active token
+          const replacementRecord = await RefreshToken.findOneAndUpdate(
+            {
+              tokenHash: existing.replacedBy,
+              revokedAt: null,
+              expiresAt: { $gt: now },
+            },
+            {
+              $set: {
+                lastActiveAt: now,
+                expiresAt: newExpiresAt,
+              },
+            },
+            { new: true }
+          );
+
+          if (replacementRecord) {
+            // Successfully extended the active rotated token!
+            // isRotated: true signals that the caller should NOT set a cookie for the old token
+            return { expiresAt: newExpiresAt, isRotated: true };
+          }
+        }
+      }
+
+      throw AppError.unauthorized('Session not found or expired');
+    }
+
+    // Fallback: authenticated via Bearer token (userId present)
+    const activeRecord = await RefreshToken.findOneAndUpdate(
+      {
+        userId,
+        revokedAt: null,
+        expiresAt: { $gt: now },
+      },
+      {
+        $set: {
+          lastActiveAt: now,
+          expiresAt: newExpiresAt,
+        },
+      },
+      { new: true, sort: { createdAt: -1 } }
+    );
+
+    if (activeRecord) {
+      return { expiresAt: newExpiresAt, isRotated: false };
+    }
+
+    const existing = await RefreshToken.findOne({ userId }).sort({ createdAt: -1 });
+    if (!existing) {
+      throw AppError.unauthorized('Session not found or expired');
+    }
+    if (existing.expiresAt.getTime() <= now.getTime()) {
+      throw AppError.unauthorized('Session expired due to 3 days of inactivity');
+    }
+
+    throw AppError.unauthorized('Session not found or expired');
   }
 
   /**
@@ -171,7 +297,17 @@ export class AuthService {
   async logout(rawRefreshToken?: string): Promise<void> {
     if (rawRefreshToken) {
       const hash = hashToken(rawRefreshToken);
-      await RefreshToken.updateOne({ tokenHash: hash }, { revokedAt: new Date() });
+      const tokenRecord = await RefreshToken.findOne({ tokenHash: hash });
+      if (tokenRecord) {
+        tokenRecord.revokedAt = new Date();
+        await tokenRecord.save();
+        if (tokenRecord.replacedBy) {
+          await RefreshToken.updateOne(
+            { tokenHash: tokenRecord.replacedBy },
+            { revokedAt: new Date() }
+          );
+        }
+      }
     }
   }
 

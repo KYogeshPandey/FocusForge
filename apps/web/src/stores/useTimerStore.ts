@@ -2,11 +2,12 @@ import { create } from 'zustand';
 import type { FocusMode, Settings } from '@focusforge/shared';
 import {
   calculateRemainingSeconds,
-  getNextTimerCycle,
   formatTitleCountdown,
+  calculateTaskRoundPlan,
 } from '../utils/timer';
 import { playChime } from '../utils/sound';
 import { getFocusSessionService, getSettingsService } from '../services/serviceFactory';
+import { queryClient } from '../queryClient';
 
 const TIMER_STORAGE_KEY = 'focusforge_v1_timer_state';
 
@@ -21,29 +22,63 @@ export interface PersistedTimerState {
   subject: string;
   taskId: string | null;
   taskTitle: string | null;
+  taskTotalDurationMinutes: number | null;
+  taskFocusMinutesLogged: number;
+  currentRound: number;
+  totalRounds: number;
+  isTaskComplete: boolean;
+  clientSessionId: string | null;
 }
 
 interface TimerStoreState extends PersistedTimerState {
   remainingSeconds: number;
   progressPercentage: number;
   // Actions
-  start: () => void;
+  start: () => Promise<void>;
   pause: () => void;
-  resume: () => void;
-  reset: () => void;
-  skip: () => void;
-  setMode: (mode: FocusMode) => void;
+  resume: () => Promise<void>;
+  reset: () => Promise<void>;
+  skip: () => Promise<void>;
+  setMode: (mode: FocusMode) => Promise<void>;
   setSubject: (subject: string) => void;
-  setLinkedTask: (taskId: string | null, taskTitle: string | null, subject?: string) => void;
-  syncTick: () => void;
+  setLinkedTask: (
+    taskId: string | null,
+    taskTitle: string | null,
+    subject?: string,
+    estimatedMinutes?: number | null,
+    initialLoggedMinutes?: number
+  ) => Promise<void>;
+  syncTick: () => Promise<void>;
   initialize: () => Promise<void>;
+}
+
+function generateClientSessionId(): string {
+  return `cs_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 }
 
 function loadPersistedState(): PersistedTimerState {
   try {
-    const raw = localStorage.getItem(TIMER_STORAGE_KEY);
-    if (raw) {
-      return JSON.parse(raw) as PersistedTimerState;
+    const rawStr = localStorage.getItem(TIMER_STORAGE_KEY);
+    if (rawStr) {
+      const raw = JSON.parse(rawStr) as Partial<PersistedTimerState>;
+      return {
+        mode: raw.mode || 'focus',
+        status: raw.status || 'idle',
+        endsAt: raw.endsAt ?? null,
+        startedAt: raw.startedAt ?? null,
+        totalDurationSeconds: raw.totalDurationSeconds ?? 25 * 60,
+        pausedRemainingSeconds: raw.pausedRemainingSeconds ?? 25 * 60,
+        completedRounds: raw.completedRounds ?? 0,
+        subject: raw.subject || 'General',
+        taskId: raw.taskId ?? null,
+        taskTitle: raw.taskTitle ?? null,
+        taskTotalDurationMinutes: raw.taskTotalDurationMinutes ?? null,
+        taskFocusMinutesLogged: raw.taskFocusMinutesLogged ?? 0,
+        currentRound: raw.currentRound ?? 1,
+        totalRounds: raw.totalRounds ?? 4,
+        isTaskComplete: raw.isTaskComplete ?? false,
+        clientSessionId: raw.clientSessionId ?? null,
+      };
     }
   } catch (err) {
     console.warn('Failed to load persisted timer state:', err);
@@ -60,6 +95,12 @@ function loadPersistedState(): PersistedTimerState {
     subject: 'General',
     taskId: null,
     taskTitle: null,
+    taskTotalDurationMinutes: null,
+    taskFocusMinutesLogged: 0,
+    currentRound: 1,
+    totalRounds: 4,
+    isTaskComplete: false,
+    clientSessionId: null,
   };
 }
 
@@ -82,6 +123,9 @@ function getDurationForMode(mode: FocusMode, settings: Settings): number {
   }
 }
 
+// In-flight mutex to avoid duplicate session records during async network calls
+let isRecordingSession = false;
+
 export const useTimerStore = create<TimerStoreState>((set, get) => {
   const initial = loadPersistedState();
   const initialCalc = calculateRemainingSeconds(
@@ -97,27 +141,67 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
     progressPercentage: initialCalc.progressPercentage,
 
     initialize: async () => {
-      // Re-sync with current settings if idle
+      const persisted = loadPersistedState();
+      const calc = calculateRemainingSeconds(
+        persisted.endsAt,
+        persisted.totalDurationSeconds,
+        persisted.status !== 'running',
+        persisted.pausedRemainingSeconds
+      );
+
       const settings = await getSettingsService().get();
-      const current = get();
-      if (current.status === 'idle') {
-        const total = getDurationForMode(current.mode, settings);
+      const defaultFocusDuration = settings.focusDuration || 25;
+
+      if (persisted.status === 'idle') {
+        let total: number;
+
+        if (persisted.mode === 'focus') {
+          const plan = calculateTaskRoundPlan(
+            persisted.taskTotalDurationMinutes,
+            persisted.taskFocusMinutesLogged,
+            persisted.completedRounds,
+            defaultFocusDuration
+          );
+          total = plan.currentRoundDurationMinutes * 60;
+          set({
+            ...persisted,
+            totalDurationSeconds: total,
+            pausedRemainingSeconds: total,
+            remainingSeconds: total,
+            currentRound: plan.currentRound,
+            totalRounds: plan.totalRounds,
+            isTaskComplete: plan.isTaskComplete,
+            progressPercentage: 0,
+          });
+        } else {
+          total = getDurationForMode(persisted.mode, settings);
+          set({
+            ...persisted,
+            totalDurationSeconds: total,
+            pausedRemainingSeconds: total,
+            remainingSeconds: total,
+            progressPercentage: 0,
+          });
+        }
+      } else {
         set({
-          totalDurationSeconds: total,
-          pausedRemainingSeconds: total,
-          remainingSeconds: total,
-          progressPercentage: 0,
+          ...persisted,
+          remainingSeconds: calc.remainingSeconds,
+          progressPercentage: calc.progressPercentage,
         });
       }
     },
 
     start: async () => {
       const state = get();
+      if (state.isTaskComplete && state.mode === 'focus') return;
+
       const now = Date.now();
       const secondsToRun =
         state.status === 'paused' ? state.pausedRemainingSeconds : state.totalDurationSeconds;
       const endsAt = now + secondsToRun * 1000;
       const startedAt = state.startedAt || new Date(now).toISOString();
+      const clientSessionId = state.clientSessionId || generateClientSessionId();
 
       const updatedPersisted: PersistedTimerState = {
         ...state,
@@ -125,6 +209,7 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
         endsAt,
         startedAt,
         pausedRemainingSeconds: secondsToRun,
+        clientSessionId,
       };
 
       saveState(updatedPersisted);
@@ -133,7 +218,6 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
         remainingSeconds: secondsToRun,
       });
 
-      // Update document title
       document.title = formatTitleCountdown(secondsToRun, state.mode);
     },
 
@@ -165,20 +249,34 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
       document.title = `Paused · ${formatTitleCountdown(calc.remainingSeconds, state.mode)}`;
     },
 
-    resume: () => {
-      get().start();
+    resume: async () => {
+      await get().start();
     },
 
     reset: async () => {
       const state = get();
       const settings = await getSettingsService().get();
-      const total = getDurationForMode(state.mode, settings);
+      const defaultFocusDuration = settings.focusDuration || 25;
+
+      let total: number;
+      if (state.mode === 'focus') {
+        const plan = calculateTaskRoundPlan(
+          state.taskTotalDurationMinutes,
+          state.taskFocusMinutesLogged,
+          state.completedRounds,
+          defaultFocusDuration
+        );
+        total = plan.currentRoundDurationMinutes * 60;
+      } else {
+        total = getDurationForMode(state.mode, settings);
+      }
 
       const updated: PersistedTimerState = {
         ...state,
         status: 'idle',
         endsAt: null,
         startedAt: null,
+        clientSessionId: null,
         totalDurationSeconds: total,
         pausedRemainingSeconds: total,
       };
@@ -195,39 +293,132 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
 
     skip: async () => {
       const state = get();
-      const settings = await getSettingsService().get();
-      const { nextMode, nextRounds } = getNextTimerCycle(
-        state.mode,
-        state.completedRounds,
-        settings.longBreakInterval
-      );
-      const total = getDurationForMode(nextMode, settings);
+      if (isRecordingSession) return;
+      isRecordingSession = true;
 
-      const updated: PersistedTimerState = {
-        ...state,
-        mode: nextMode,
-        status: 'idle',
-        endsAt: null,
-        startedAt: null,
-        totalDurationSeconds: total,
-        pausedRemainingSeconds: total,
-        completedRounds: nextRounds,
-      };
+      try {
+        const settings = await getSettingsService().get();
+        const defaultFocusDuration = settings.focusDuration || 25;
 
-      saveState(updated);
-      set({
-        ...updated,
-        remainingSeconds: total,
-        progressPercentage: 0,
-      });
+        // Calculate actual elapsed seconds
+        const currentRemaining =
+          state.status === 'running' && state.endsAt !== null
+            ? Math.max(0, Math.ceil((state.endsAt - Date.now()) / 1000))
+            : state.pausedRemainingSeconds;
+        const elapsedSeconds = Math.max(0, state.totalDurationSeconds - currentRemaining);
+        const elapsedMinutes = Math.floor(elapsedSeconds / 60);
 
-      document.title = 'FocusForge — Student Study Planner';
+        let nextTaskFocusMinutesLogged = state.taskFocusMinutesLogged;
+        let nextCompletedRounds = state.completedRounds;
+
+        if (state.mode === 'focus') {
+          // If focus session had elapsed time > 0, record it
+          const remainingBudget = state.taskTotalDurationMinutes
+            ? Math.max(0, state.taskTotalDurationMinutes - state.taskFocusMinutesLogged)
+            : Infinity;
+          const minutesToRecord = Math.min(elapsedMinutes, remainingBudget);
+
+          if (minutesToRecord > 0) {
+            nextTaskFocusMinutesLogged += minutesToRecord;
+            const endNow = new Date().toISOString();
+            const startedAt =
+              state.startedAt || new Date(Date.now() - elapsedSeconds * 1000).toISOString();
+
+            await getFocusSessionService().create({
+              title: state.taskTitle || `${state.subject} Focus Session`,
+              subject: state.subject,
+              durationMinutes: minutesToRecord,
+              startedAt,
+              endedAt: endNow,
+              mode: 'focus',
+              taskId: state.taskId,
+              clientSessionId: state.clientSessionId || generateClientSessionId(),
+            });
+
+            queryClient.invalidateQueries({ queryKey: ['focus_sessions'] });
+          }
+
+          nextCompletedRounds = state.completedRounds + 1;
+        }
+
+        // Calculate plan after this round
+        const plan = calculateTaskRoundPlan(
+          state.taskTotalDurationMinutes,
+          nextTaskFocusMinutesLogged,
+          nextCompletedRounds,
+          defaultFocusDuration
+        );
+
+        let nextMode: FocusMode;
+        let nextDurationSeconds: number;
+
+        if (state.mode === 'focus') {
+          if (plan.isTaskComplete) {
+            nextMode = 'focus';
+            nextDurationSeconds = 0;
+          } else {
+            if (nextCompletedRounds % settings.longBreakInterval === 0) {
+              nextMode = 'long-break';
+              nextDurationSeconds = settings.longBreakDuration * 60;
+            } else {
+              nextMode = 'short-break';
+              nextDurationSeconds = settings.shortBreakDuration * 60;
+            }
+          }
+        } else {
+          // Skipping a break moves to next focus round
+          nextMode = 'focus';
+          nextDurationSeconds = plan.currentRoundDurationMinutes * 60;
+        }
+
+        const updated: PersistedTimerState = {
+          ...state,
+          mode: nextMode,
+          status: 'idle',
+          endsAt: null,
+          startedAt: null,
+          clientSessionId: null,
+          totalDurationSeconds: nextDurationSeconds,
+          pausedRemainingSeconds: nextDurationSeconds,
+          completedRounds: nextCompletedRounds,
+          taskFocusMinutesLogged: nextTaskFocusMinutesLogged,
+          currentRound: plan.currentRound,
+          totalRounds: plan.totalRounds,
+          isTaskComplete: plan.isTaskComplete,
+        };
+
+        saveState(updated);
+        set({
+          ...updated,
+          remainingSeconds: nextDurationSeconds,
+          progressPercentage: 0,
+        });
+
+        document.title = plan.isTaskComplete
+          ? 'Task Completed! · FocusForge'
+          : 'FocusForge — Student Study Planner';
+      } finally {
+        isRecordingSession = false;
+      }
     },
 
     setMode: async (mode: FocusMode) => {
       const state = get();
       const settings = await getSettingsService().get();
-      const total = getDurationForMode(mode, settings);
+      const defaultFocusDuration = settings.focusDuration || 25;
+
+      let total: number;
+      if (mode === 'focus') {
+        const plan = calculateTaskRoundPlan(
+          state.taskTotalDurationMinutes,
+          state.taskFocusMinutesLogged,
+          state.completedRounds,
+          defaultFocusDuration
+        );
+        total = plan.currentRoundDurationMinutes * 60;
+      } else {
+        total = getDurationForMode(mode, settings);
+      }
 
       const updated: PersistedTimerState = {
         ...state,
@@ -235,6 +426,7 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
         status: 'idle',
         endsAt: null,
         startedAt: null,
+        clientSessionId: null,
         totalDurationSeconds: total,
         pausedRemainingSeconds: total,
       };
@@ -256,22 +448,66 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
       set({ subject });
     },
 
-    setLinkedTask: (taskId: string | null, taskTitle: string | null, subject?: string) => {
+    setLinkedTask: async (
+      taskId: string | null,
+      taskTitle: string | null,
+      subject?: string,
+      estimatedMinutes?: number | null,
+      initialLoggedMinutes: number = 0
+    ) => {
       const state = get();
-      const nextSubject = subject || state.subject;
-      const updated = {
+      const settings = await getSettingsService().get();
+      const defaultFocusDuration = settings.focusDuration || 25;
+      const nextSubject = subject || (taskId ? state.subject : 'General');
+      const taskDuration = estimatedMinutes && estimatedMinutes > 0 ? estimatedMinutes : null;
+
+      const initialCompletedRounds =
+        taskDuration && initialLoggedMinutes > 0
+          ? Math.floor(initialLoggedMinutes / defaultFocusDuration)
+          : 0;
+
+      const plan = calculateTaskRoundPlan(
+        taskDuration,
+        initialLoggedMinutes,
+        initialCompletedRounds,
+        defaultFocusDuration
+      );
+
+      const initialDurationSeconds =
+        state.mode === 'focus'
+          ? plan.currentRoundDurationMinutes * 60
+          : getDurationForMode(state.mode, settings);
+
+      const updated: PersistedTimerState = {
         ...state,
+        status: 'idle',
+        endsAt: null,
+        startedAt: null,
+        clientSessionId: null,
         taskId,
         taskTitle,
         subject: nextSubject,
+        taskTotalDurationMinutes: taskDuration,
+        taskFocusMinutesLogged: initialLoggedMinutes,
+        completedRounds: initialCompletedRounds,
+        currentRound: plan.currentRound,
+        totalRounds: plan.totalRounds,
+        isTaskComplete: plan.isTaskComplete,
+        totalDurationSeconds: initialDurationSeconds,
+        pausedRemainingSeconds: initialDurationSeconds,
       };
+
       saveState(updated);
-      set({ taskId, taskTitle, subject: nextSubject });
+      set({
+        ...updated,
+        remainingSeconds: initialDurationSeconds,
+        progressPercentage: 0,
+      });
     },
 
     syncTick: async () => {
       const state = get();
-      if (state.status !== 'running' || state.endsAt === null) return;
+      if (state.status !== 'running' || state.endsAt === null || isRecordingSession) return;
 
       const calc = calculateRemainingSeconds(
         state.endsAt,
@@ -281,58 +517,109 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
       );
 
       if (calc.isFinished) {
-        // Complete current interval!
-        const settings = await getSettingsService().get();
+        isRecordingSession = true;
+        try {
+          const settings = await getSettingsService().get();
+          const defaultFocusDuration = settings.focusDuration || 25;
 
-        // 1. Play sound chime if enabled
-        if (settings.soundEnabled) {
-          playChime(settings.soundVolume);
-        }
+          // 1. Play sound chime if enabled
+          if (settings.soundEnabled) {
+            playChime(settings.soundVolume);
+          }
 
-        // 2. If it was a focus session, auto-record it to FocusSessionService
-        if (state.mode === 'focus') {
-          const durationMinutes = Math.round(state.totalDurationSeconds / 60);
-          const endNow = new Date().toISOString();
-          const startedAt = state.startedAt || new Date(Date.now() - state.totalDurationSeconds * 1000).toISOString();
+          let nextTaskFocusMinutesLogged = state.taskFocusMinutesLogged;
+          let nextCompletedRounds = state.completedRounds;
 
-          await getFocusSessionService().create({
-            title: state.taskTitle || `${state.subject} Focus Session`,
-            subject: state.subject,
-            durationMinutes,
-            startedAt,
-            endedAt: endNow,
-            mode: 'focus',
-            taskId: state.taskId,
+          // 2. If it was a focus session, auto-record it
+          if (state.mode === 'focus') {
+            const plannedMinutes = Math.round(state.totalDurationSeconds / 60);
+            const remainingBudget = state.taskTotalDurationMinutes
+              ? Math.max(0, state.taskTotalDurationMinutes - state.taskFocusMinutesLogged)
+              : Infinity;
+            const minutesToRecord = Math.min(plannedMinutes, remainingBudget);
+
+            if (minutesToRecord > 0) {
+              nextTaskFocusMinutesLogged += minutesToRecord;
+              const endNow = new Date().toISOString();
+              const startedAt =
+                state.startedAt || new Date(Date.now() - state.totalDurationSeconds * 1000).toISOString();
+
+              await getFocusSessionService().create({
+                title: state.taskTitle || `${state.subject} Focus Session`,
+                subject: state.subject,
+                durationMinutes: minutesToRecord,
+                startedAt,
+                endedAt: endNow,
+                mode: 'focus',
+                taskId: state.taskId,
+                clientSessionId: state.clientSessionId || generateClientSessionId(),
+              });
+
+              queryClient.invalidateQueries({ queryKey: ['focus_sessions'] });
+            }
+
+            nextCompletedRounds = state.completedRounds + 1;
+          }
+
+          // 3. Calculate plan after this round completes
+          const plan = calculateTaskRoundPlan(
+            state.taskTotalDurationMinutes,
+            nextTaskFocusMinutesLogged,
+            nextCompletedRounds,
+            defaultFocusDuration
+          );
+
+          let nextMode: FocusMode;
+          let nextDurationSeconds: number;
+
+          if (state.mode === 'focus') {
+            if (plan.isTaskComplete) {
+              nextMode = 'focus';
+              nextDurationSeconds = 0;
+            } else {
+              if (nextCompletedRounds % settings.longBreakInterval === 0) {
+                nextMode = 'long-break';
+                nextDurationSeconds = settings.longBreakDuration * 60;
+              } else {
+                nextMode = 'short-break';
+                nextDurationSeconds = settings.shortBreakDuration * 60;
+              }
+            }
+          } else {
+            // Break completed, move to next focus round
+            nextMode = 'focus';
+            nextDurationSeconds = plan.currentRoundDurationMinutes * 60;
+          }
+
+          const updated: PersistedTimerState = {
+            ...state,
+            mode: nextMode,
+            status: 'idle',
+            endsAt: null,
+            startedAt: null,
+            clientSessionId: null,
+            totalDurationSeconds: nextDurationSeconds,
+            pausedRemainingSeconds: nextDurationSeconds,
+            completedRounds: nextCompletedRounds,
+            taskFocusMinutesLogged: nextTaskFocusMinutesLogged,
+            currentRound: plan.currentRound,
+            totalRounds: plan.totalRounds,
+            isTaskComplete: plan.isTaskComplete,
+          };
+
+          saveState(updated);
+          set({
+            ...updated,
+            remainingSeconds: nextDurationSeconds,
+            progressPercentage: 0,
           });
+
+          document.title = plan.isTaskComplete
+            ? 'Task Completed! · FocusForge'
+            : 'Completed! · FocusForge';
+        } finally {
+          isRecordingSession = false;
         }
-
-        // 3. Move to next mode
-        const { nextMode, nextRounds } = getNextTimerCycle(
-          state.mode,
-          state.completedRounds,
-          settings.longBreakInterval
-        );
-        const nextTotal = getDurationForMode(nextMode, settings);
-
-        const updated: PersistedTimerState = {
-          ...state,
-          mode: nextMode,
-          status: 'idle',
-          endsAt: null,
-          startedAt: null,
-          totalDurationSeconds: nextTotal,
-          pausedRemainingSeconds: nextTotal,
-          completedRounds: nextRounds,
-        };
-
-        saveState(updated);
-        set({
-          ...updated,
-          remainingSeconds: nextTotal,
-          progressPercentage: 0,
-        });
-
-        document.title = `Completed! · FocusForge`;
       } else {
         set({
           remainingSeconds: calc.remainingSeconds,

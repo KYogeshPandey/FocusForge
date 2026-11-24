@@ -20,6 +20,11 @@ export default function FocusTimerPage() {
     totalDurationSeconds,
     progressPercentage,
     completedRounds,
+    currentRound,
+    totalRounds,
+    taskTotalDurationMinutes,
+    taskFocusMinutesLogged,
+    isTaskComplete,
     subject,
     taskId,
     taskTitle,
@@ -56,7 +61,10 @@ export default function FocusTimerPage() {
     } else {
       const task = tasks.find((t: Task) => t.id === selectedId);
       if (task) {
-        setLinkedTask(task.id, task.title, task.subject);
+        const existingLogged = focusSessions
+          .filter((s: FocusSession) => s.taskId === task.id && s.mode === 'focus')
+          .reduce((acc: number, s: FocusSession) => acc + s.durationMinutes, 0);
+        setLinkedTask(task.id, task.title, task.subject, task.estimatedMinutes, existingLogged);
       }
     }
   };
@@ -125,8 +133,18 @@ export default function FocusTimerPage() {
         />
 
         {/* Round Progress Indicator */}
-        <div className="mt-4">
-          <RoundIndicator completedRounds={completedRounds} longBreakInterval={4} />
+        <div className="mt-4 flex flex-col items-center">
+          <RoundIndicator
+            completedRounds={completedRounds}
+            currentRound={currentRound}
+            totalRounds={totalRounds}
+            longBreakInterval={4}
+          />
+          {isTaskComplete && (
+            <div className="mt-2 text-xs font-medium text-success bg-success-soft px-3 py-1 rounded-full">
+              Task focus goal completed ({taskFocusMinutesLogged}m / {taskTotalDurationMinutes}m)
+            </div>
+          )}
         </div>
 
         {/* Controls */}

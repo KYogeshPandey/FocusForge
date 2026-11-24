@@ -13,7 +13,7 @@ import { ApiError } from '../services/api/apiError';
 export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login } = useAuthStore();
+  const { login, sessionExpiredMessage, clearSessionExpiredMessage } = useAuthStore();
 
   const [showPassword, setShowPassword] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -21,6 +21,8 @@ export default function LoginPage() {
 
   // Return to intended page or dashboard
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname || '/';
+  const locationExpired = (location.state as { sessionExpiredMessage?: string })?.sessionExpiredMessage;
+  const expiredNotice = locationExpired || sessionExpiredMessage;
 
   const {
     register,
@@ -36,6 +38,7 @@ export default function LoginPage() {
 
   const onSubmit = async (data: LoginInput) => {
     setFormError(null);
+    clearSessionExpiredMessage();
     try {
       await login(data);
       navigate(from, { replace: true });
@@ -56,6 +59,16 @@ export default function LoginPage() {
         <h1 className="text-2xl font-bold tracking-tight text-text">Welcome Back</h1>
         <p className="text-xs text-text-muted">Sign in to sync your study plan across devices</p>
       </div>
+
+      {expiredNotice && !formError && (
+        <div
+          role="alert"
+          className="p-3 bg-warning/10 border border-warning/30 rounded-button flex items-start gap-2.5 text-xs text-warning font-medium animate-in fade-in duration-fast"
+        >
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{expiredNotice}</span>
+        </div>
+      )}
 
       {formError && (
         <div

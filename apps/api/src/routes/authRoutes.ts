@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authController } from '../controllers/authController.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireSessionAuth } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { authLimiter } from '../middleware/rateLimiter.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -38,6 +38,13 @@ router.post(
 router.post(
   '/logout',
   asyncHandler((req, res) => authController.logout(req, res))
+);
+
+router.post(
+  '/activity',
+  authLimiter,
+  asyncHandler(requireSessionAuth),
+  asyncHandler((req, res) => authController.recordActivity(req, res))
 );
 
 // Protected user management routes

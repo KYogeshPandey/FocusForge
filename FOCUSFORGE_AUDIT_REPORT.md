@@ -1,4 +1,4 @@
-﻿# FocusForge Independent Technical Audit & Production Readiness Assessment
+# FocusForge Independent Technical Audit & Production Readiness Assessment
 
 **Auditor:** Senior Full-Stack Engineer & Software Architect
 **Project:** FocusForge (Student Study Planner & Productivity Tracker)

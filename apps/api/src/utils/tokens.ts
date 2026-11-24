@@ -26,14 +26,18 @@ export function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
-export function getRefreshTokenCookieOptions(): CookieOptions {
+export const INACTIVITY_TIMEOUT_MS = 72 * 60 * 60 * 1000; // 72 hours (3 days) in ms
+
+export function getRefreshTokenCookieOptions(maxAgeMs?: number): CookieOptions {
   const isProduction = env.NODE_ENV === 'production';
+  const effectiveMaxAge =
+    typeof maxAgeMs === 'number' ? Math.max(0, Math.floor(maxAgeMs)) : INACTIVITY_TIMEOUT_MS;
   return {
     httpOnly: true,
     secure: isProduction,
     sameSite: 'lax',
     path: '/api/v1/auth',
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in ms
+    maxAge: effectiveMaxAge,
   };
 }
 
