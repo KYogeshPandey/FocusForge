@@ -7,6 +7,7 @@ import { TimerRing } from '../components/timer/TimerRing';
 import { ModeSwitcher } from '../components/timer/ModeSwitcher';
 import { TimerControls } from '../components/timer/TimerControls';
 import { RoundIndicator } from '../components/timer/RoundIndicator';
+import { AlarmAlert } from '../components/timer/AlarmAlert';
 import { Card } from '../components/ui/Card';
 import { formatDuration, isDateToday } from '../utils/dates';
 import { cn } from '../utils/cn';
@@ -25,6 +26,7 @@ export default function FocusTimerPage() {
     taskTotalDurationMinutes,
     taskFocusMinutesLogged,
     isTaskComplete,
+    isAlarmActive,
     subject,
     taskId,
     taskTitle,
@@ -33,6 +35,7 @@ export default function FocusTimerPage() {
     resume,
     reset,
     skip,
+    pauseAlarm,
     setMode,
     setSubject,
     setLinkedTask,
@@ -112,6 +115,9 @@ export default function FocusTimerPage() {
 
       {/* Main Center Timer Box */}
       <div className="w-full flex flex-col items-center my-6">
+        {/* Prominent Completion Alarm Alert */}
+        <AlarmAlert variant="page" className="mb-4" />
+
         {/* Mode Switcher */}
         <div className="mb-6">
           <ModeSwitcher
@@ -150,11 +156,13 @@ export default function FocusTimerPage() {
         {/* Controls */}
         <TimerControls
           status={status}
+          isAlarmActive={isAlarmActive}
           onStart={start}
           onPause={pause}
           onResume={resume}
           onReset={reset}
           onSkip={skip}
+          onPauseAlarm={pauseAlarm}
         />
       </div>
 

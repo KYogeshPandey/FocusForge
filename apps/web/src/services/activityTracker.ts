@@ -45,13 +45,9 @@ export function setLastActiveTime(timestamp: number): void {
   }
 }
 
-export function isSessionExpiredDueToInactivity(timeoutMs = INACTIVITY_TIMEOUT_MS): boolean {
-  if (typeof window === 'undefined') return false;
-  const raw = localStorage.getItem(LAST_ACTIVE_KEY);
-  if (!raw) return false;
-  const lastActive = parseInt(raw, 10);
-  if (isNaN(lastActive)) return false;
-  return Date.now() - lastActive >= timeoutMs;
+export function isSessionExpiredDueToInactivity(_timeoutMs = INACTIVITY_TIMEOUT_MS): boolean {
+  // Persistent authentication policy: users remain logged in across inactivity
+  return false;
 }
 
 export function recordUserActivity(forceServerSync = false): void {

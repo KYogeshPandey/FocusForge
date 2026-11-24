@@ -6,6 +6,7 @@ import {
   calculateTaskRoundPlan,
 } from '../utils/timer';
 import { playChime } from '../utils/sound';
+import { alarmService } from '../services/alarmService';
 import { getFocusSessionService, getSettingsService } from '../services/serviceFactory';
 import { queryClient } from '../queryClient';
 
@@ -33,12 +34,15 @@ export interface PersistedTimerState {
 interface TimerStoreState extends PersistedTimerState {
   remainingSeconds: number;
   progressPercentage: number;
+  isAlarmActive: boolean;
+  alarmPeriodName: string | null;
   // Actions
   start: () => Promise<void>;
   pause: () => void;
   resume: () => Promise<void>;
   reset: () => Promise<void>;
   skip: () => Promise<void>;
+  pauseAlarm: () => void;
   setMode: (mode: FocusMode) => Promise<void>;
   setSubject: (subject: string) => void;
   setLinkedTask: (
@@ -125,6 +129,7 @@ function getDurationForMode(mode: FocusMode, settings: Settings): number {
 
 // In-flight mutex to avoid duplicate session records during async network calls
 let isRecordingSession = false;
+let lastAlarmEndsAt: number | null = null;
 
 export const useTimerStore = create<TimerStoreState>((set, get) => {
   const initial = loadPersistedState();
@@ -139,6 +144,8 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
     ...initial,
     remainingSeconds: initialCalc.remainingSeconds,
     progressPercentage: initialCalc.progressPercentage,
+    isAlarmActive: false,
+    alarmPeriodName: null,
 
     initialize: async () => {
       const persisted = loadPersistedState();
@@ -192,9 +199,24 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
       }
     },
 
+    pauseAlarm: () => {
+      alarmService.stop();
+      set({
+        isAlarmActive: false,
+        alarmPeriodName: null,
+      });
+      document.title = 'FocusForge — Student Study Planner';
+    },
+
     start: async () => {
       const state = get();
       if (state.isTaskComplete && state.mode === 'focus') return;
+
+      lastAlarmEndsAt = null;
+      if (state.isAlarmActive) {
+        alarmService.stop();
+      }
+      alarmService.unlock();
 
       const now = Date.now();
       const secondsToRun =
@@ -216,6 +238,8 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
       set({
         ...updatedPersisted,
         remainingSeconds: secondsToRun,
+        isAlarmActive: false,
+        alarmPeriodName: null,
       });
 
       document.title = formatTitleCountdown(secondsToRun, state.mode);
@@ -255,6 +279,10 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
 
     reset: async () => {
       const state = get();
+      lastAlarmEndsAt = null;
+      if (state.isAlarmActive) {
+        alarmService.stop();
+      }
       const settings = await getSettingsService().get();
       const defaultFocusDuration = settings.focusDuration || 25;
 
@@ -286,6 +314,8 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
         ...updated,
         remainingSeconds: total,
         progressPercentage: 0,
+        isAlarmActive: false,
+        alarmPeriodName: null,
       });
 
       document.title = 'FocusForge — Student Study Planner';
@@ -293,6 +323,10 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
 
     skip: async () => {
       const state = get();
+      lastAlarmEndsAt = null;
+      if (state.isAlarmActive) {
+        alarmService.stop();
+      }
       if (isRecordingSession) return;
       isRecordingSession = true;
 
@@ -392,6 +426,8 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
           ...updated,
           remainingSeconds: nextDurationSeconds,
           progressPercentage: 0,
+          isAlarmActive: false,
+          alarmPeriodName: null,
         });
 
         document.title = plan.isTaskComplete
@@ -404,6 +440,10 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
 
     setMode: async (mode: FocusMode) => {
       const state = get();
+      lastAlarmEndsAt = null;
+      if (state.isAlarmActive) {
+        alarmService.stop();
+      }
       const settings = await getSettingsService().get();
       const defaultFocusDuration = settings.focusDuration || 25;
 
@@ -436,6 +476,8 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
         ...updated,
         remainingSeconds: total,
         progressPercentage: 0,
+        isAlarmActive: false,
+        alarmPeriodName: null,
       });
 
       document.title = 'FocusForge — Student Study Planner';
@@ -456,6 +498,10 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
       initialLoggedMinutes: number = 0
     ) => {
       const state = get();
+      lastAlarmEndsAt = null;
+      if (state.isAlarmActive) {
+        alarmService.stop();
+      }
       const settings = await getSettingsService().get();
       const defaultFocusDuration = settings.focusDuration || 25;
       const nextSubject = subject || (taskId ? state.subject : 'General');
@@ -502,6 +548,8 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
         ...updated,
         remainingSeconds: initialDurationSeconds,
         progressPercentage: 0,
+        isAlarmActive: false,
+        alarmPeriodName: null,
       });
     },
 
@@ -517,13 +565,36 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
       );
 
       if (calc.isFinished) {
+        // Prevent duplicate alarms if this timer endsAt was already processed
+        if (lastAlarmEndsAt !== null && lastAlarmEndsAt === state.endsAt) {
+          return;
+        }
+        lastAlarmEndsAt = state.endsAt;
         isRecordingSession = true;
         try {
           const settings = await getSettingsService().get();
           const defaultFocusDuration = settings.focusDuration || 25;
 
-          // 1. Play sound chime if enabled
-          if (settings.soundEnabled) {
+          const completedMode = state.mode;
+          let completedPeriodName: string;
+          if (completedMode === 'focus') {
+            completedPeriodName = state.taskTitle
+              ? `${state.taskTitle} (Focus Session)`
+              : `${state.subject} Focus Session`;
+          } else if (completedMode === 'short-break') {
+            completedPeriodName = 'Short Break';
+          } else {
+            completedPeriodName = 'Long Break';
+          }
+
+          // Trigger continuous audible alarm if enabled
+          const isAlarmEnabled = settings.alarmEnabled ?? settings.soundEnabled ?? true;
+          const alarmVolume = settings.alarmVolume ?? settings.soundVolume ?? 70;
+          const alarmSound = settings.alarmSound || 'chime';
+
+          if (isAlarmEnabled) {
+            alarmService.play({ sound: alarmSound, volume: alarmVolume });
+          } else if (settings.soundEnabled) {
             playChime(settings.soundVolume);
           }
 
@@ -612,9 +683,13 @@ export const useTimerStore = create<TimerStoreState>((set, get) => {
             ...updated,
             remainingSeconds: nextDurationSeconds,
             progressPercentage: 0,
+            isAlarmActive: isAlarmEnabled,
+            alarmPeriodName: isAlarmEnabled ? completedPeriodName : null,
           });
 
-          document.title = plan.isTaskComplete
+          document.title = isAlarmEnabled
+            ? `Time's up! · ${completedPeriodName} · FocusForge`
+            : plan.isTaskComplete
             ? 'Task Completed! · FocusForge'
             : 'Completed! · FocusForge';
         } finally {

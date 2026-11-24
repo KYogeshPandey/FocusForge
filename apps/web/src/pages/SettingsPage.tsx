@@ -5,6 +5,7 @@ import {
   UpdateSettingsInputSchema,
   type UpdateSettingsInput,
   type Theme,
+  type AlarmSound,
 } from '@focusforge/shared';
 import {
   useSettings,
@@ -21,7 +22,7 @@ import { Input } from '../components/ui/Input';
 import { Toggle } from '../components/ui/Toggle';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { AccountSettings } from '../components/settings/AccountSettings';
-import { playChime } from '../utils/sound';
+import { alarmService } from '../services/alarmService';
 import {
   Sun,
   Moon,
@@ -68,12 +69,18 @@ export default function SettingsPage() {
       longBreakInterval: 4,
       soundEnabled: true,
       soundVolume: 70,
+      alarmEnabled: true,
+      alarmVolume: 70,
+      alarmSound: 'chime',
       weekStartDay: 'monday',
     },
   });
 
   const currentSoundEnabled = watch('soundEnabled');
   const currentSoundVolume = watch('soundVolume') ?? 70;
+  const currentAlarmEnabled = watch('alarmEnabled') ?? currentSoundEnabled ?? true;
+  const currentAlarmVolume = watch('alarmVolume') ?? currentSoundVolume ?? 70;
+  const currentAlarmSound = (watch('alarmSound') || 'chime') as AlarmSound;
   const currentWeekStart = watch('weekStartDay');
 
   useEffect(() => {
@@ -86,6 +93,9 @@ export default function SettingsPage() {
         longBreakInterval: settings.longBreakInterval,
         soundEnabled: settings.soundEnabled,
         soundVolume: settings.soundVolume,
+        alarmEnabled: settings.alarmEnabled ?? settings.soundEnabled ?? true,
+        alarmVolume: settings.alarmVolume ?? settings.soundVolume ?? 70,
+        alarmSound: settings.alarmSound || 'chime',
         weekStartDay: settings.weekStartDay,
       });
     }
@@ -119,7 +129,7 @@ export default function SettingsPage() {
   };
 
   const handleTestSound = () => {
-    playChime(currentSoundVolume);
+    alarmService.preview({ sound: currentAlarmSound, volume: currentAlarmVolume });
   };
 
   const handleResetDemoData = async () => {
@@ -275,51 +285,78 @@ export default function SettingsPage() {
         <Card>
           <CardHeader>
             <div>
-              <CardTitle>Sound & Alerts</CardTitle>
+              <CardTitle>Alarm & Sound Alerts</CardTitle>
               <CardDescription>
-                Play an ambient audio chime when a focus round or break concludes.
+                Configure persistent audible alarms and chime notifications when focus sessions or breaks conclude.
               </CardDescription>
             </div>
           </CardHeader>
 
-          <div className="space-y-4 pt-2">
+          <div className="space-y-5 pt-2">
             <Toggle
-              label="Enable Interval Completion Sound"
-              description="Uses Web Audio API synthesis without external network requests"
-              checked={currentSoundEnabled}
-              onChange={(e) => setValue('soundEnabled', e.target.checked, { shouldDirty: true })}
+              label="Continuous Completion Alarm"
+              description="Plays a continuous looping alarm when a focus session or break ends until paused"
+              checked={currentAlarmEnabled}
+              onChange={(e) => {
+                setValue('alarmEnabled', e.target.checked, { shouldDirty: true });
+                setValue('soundEnabled', e.target.checked, { shouldDirty: true });
+              }}
             />
 
-            {currentSoundEnabled && (
-              <div className="flex items-center gap-4 pt-2">
-                <Volume2 className="w-4 h-4 text-text-muted shrink-0" />
-                <div className="flex-1">
-                  <div className="flex items-center justify-between text-xs text-text-muted mb-1">
-                    <span>Volume</span>
-                    <span>{currentSoundVolume}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    aria-label="Chime Volume"
-                    value={currentSoundVolume}
+            {currentAlarmEnabled && (
+              <>
+                <div className="space-y-1.5 pt-1">
+                  <label htmlFor="alarm-sound-select" className="block text-xs font-semibold text-text">
+                    Alarm Sound Preset
+                  </label>
+                  <select
+                    id="alarm-sound-select"
+                    value={currentAlarmSound}
                     onChange={(e) =>
-                      setValue('soundVolume', Number(e.target.value), { shouldDirty: true })
+                      setValue('alarmSound', e.target.value as AlarmSound, { shouldDirty: true })
                     }
-                    className="w-full accent-primary cursor-pointer"
-                  />
+                    className="w-full sm:w-72 h-9 px-3 text-xs bg-surface-2 text-text border border-border rounded-input"
+                  >
+                    <option value="chime">Chime (Melodic Ascending)</option>
+                    <option value="digital">Digital (Dual Beep)</option>
+                    <option value="bell">Acoustic Bell (Harmonic)</option>
+                    <option value="marimba">Marimba (Warm Percussion)</option>
+                  </select>
                 </div>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleTestSound}
-                  className="shrink-0"
-                >
-                  Test Chime
-                </Button>
-              </div>
+
+                <div className="flex items-center gap-4 pt-1">
+                  <Volume2 className="w-4 h-4 text-text-muted shrink-0" />
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between text-xs text-text-muted mb-1">
+                      <span>Alarm Volume</span>
+                      <span>{currentAlarmVolume}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      aria-label="Alarm Volume"
+                      value={currentAlarmVolume}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        setValue('alarmVolume', val, { shouldDirty: true });
+                        setValue('soundVolume', val, { shouldDirty: true });
+                      }}
+                      className="w-full accent-primary cursor-pointer"
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleTestSound}
+                    className="shrink-0 gap-1.5"
+                  >
+                    <Volume2 className="w-3.5 h-3.5" />
+                    <span>Test Sound</span>
+                  </Button>
+                </div>
+              </>
             )}
           </div>
         </Card>

@@ -8,6 +8,9 @@ export const UserPreferencesSchema = z.object({
   longBreakInterval: z.number().int().min(1).max(12).default(4),
   soundEnabled: z.boolean().default(true),
   soundVolume: z.number().min(0).max(100).default(70),
+  alarmEnabled: z.boolean().default(true),
+  alarmVolume: z.number().min(0).max(100).default(70),
+  alarmSound: z.enum(['chime', 'digital', 'bell', 'marimba']).default('chime'),
   weekStartDay: z.enum(['monday', 'sunday']).default('monday'),
   timezone: z.string().default('UTC'),
 });

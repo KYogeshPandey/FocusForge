@@ -2,6 +2,8 @@ import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { verifyAccessToken, hashToken, REFRESH_COOKIE_NAME } from '../utils/tokens.js';
 import { RefreshToken } from '../models/RefreshToken.js';
+import { Session } from '../models/Session.js';
+import { resolveActiveRotationChain } from '../services/authService.js';
 import { AppError } from '../utils/AppError.js';
 
 export interface AuthenticatedUser {
@@ -46,60 +48,72 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction): v
 
 /**
  * Middleware that validates the caller has an active authenticated session.
- * Specifically designed for session-maintenance endpoints (like /activity)
- * so that expired 15-minute access tokens do not break the 72-hour refresh session lifecycle.
- * Accepts either an active HttpOnly refresh cookie or Bearer access token.
+ * Specifically designed for session-maintenance endpoints (like /activity).
+ * Requires a valid refresh-cookie-backed session; Bearer-only tokens cannot extend sessions.
  */
 export async function requireSessionAuth(req: Request, _res: Response, next: NextFunction): Promise<void> {
   const cookieToken = req.cookies?.[REFRESH_COOKIE_NAME];
-  const authHeader = req.headers.authorization;
 
-  // 1. HttpOnly refresh cookie validation
-  if (cookieToken) {
-    const presentedHash = hashToken(cookieToken);
-    const tokenRecord = await RefreshToken.findOne({ tokenHash: presentedHash });
+  if (!cookieToken) {
+    throw AppError.unauthorized('Authentication session required');
+  }
 
-    if (!tokenRecord) {
-      throw AppError.unauthorized('Invalid or expired session');
-    }
+  const presentedHash = hashToken(cookieToken);
+  const tokenRecord = await RefreshToken.findOne({ tokenHash: presentedHash });
 
-    if (tokenRecord.revokedAt) {
-      // Check if it was rotated concurrently within 30s
-      const gracePeriodMs = 30 * 1000;
-      if (tokenRecord.replacedBy && Date.now() - tokenRecord.revokedAt.getTime() < gracePeriodMs) {
-        req.user = { id: tokenRecord.userId.toString() };
-        return next();
+  if (!tokenRecord) {
+    throw AppError.unauthorized('Invalid or expired session');
+  }
+
+  // Capture comparison timestamp immediately AFTER database read
+  const now = new Date();
+
+  // Future timestamp validation
+  if (tokenRecord.revokedAt && tokenRecord.revokedAt.getTime() > now.getTime()) {
+    throw AppError.unauthorized('Invalid session timestamp');
+  }
+
+  // If token belongs to a stable session, verify session is active and unrevoked
+  if (tokenRecord.sessionId) {
+    const session = await Session.findById(tokenRecord.sessionId);
+    if (!session || session.revokedAt != null) {
+      if (session?.revokedAt && session.revokedAt.getTime() > now.getTime()) {
+        throw AppError.unauthorized('Invalid session timestamp');
       }
       throw AppError.unauthorized('Session has been revoked');
     }
-
-    if (tokenRecord.expiresAt.getTime() <= Date.now()) {
-      throw AppError.unauthorized('Session expired due to 3 days of inactivity');
+    if (session.expiresAt.getTime() <= now.getTime()) {
+      throw AppError.unauthorized('Session has expired. Please log in again.');
     }
-
-    req.user = { id: tokenRecord.userId.toString() };
-    return next();
   }
 
-  // 2. Bearer access token fallback
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.split(' ')[1];
-    if (token) {
-      try {
-        const payload = verifyAccessToken(token);
-        if (payload.sub) {
-          req.user = { id: payload.sub };
-          return next();
-        }
-      } catch (err: unknown) {
-        if (err instanceof jwt.TokenExpiredError) {
-          throw new AppError(401, 'TOKEN_EXPIRED', 'Access token has expired');
-        }
-        throw new AppError(401, 'INVALID_TOKEN', 'Access token is invalid');
+  // If token is revoked, check concurrent rotation grace period
+  if (tokenRecord.revokedAt) {
+    const gracePeriodMs = 30 * 1000;
+    const timeSinceRevoke = now.getTime() - tokenRecord.revokedAt.getTime();
+
+    if (tokenRecord.replacedBy && timeSinceRevoke >= 0 && timeSinceRevoke < gracePeriodMs) {
+      // Resolve active terminal token in rotation chain
+      const terminalRecord = await resolveActiveRotationChain(tokenRecord, now);
+
+      if (terminalRecord) {
+        req.user = { id: terminalRecord.userId.toString() };
+        return next();
       }
     }
+    throw AppError.unauthorized('Session has been revoked');
   }
 
-  // Neither valid cookie nor valid Bearer token provided
-  throw AppError.unauthorized('Authentication session required');
+  if (tokenRecord.expiresAt.getTime() <= now.getTime()) {
+    throw AppError.unauthorized('Session has expired. Please log in again.');
+  }
+
+  // Mark token as used if first time presented
+  if (!tokenRecord.firstUsedAt) {
+    tokenRecord.firstUsedAt = now;
+    await tokenRecord.save();
+  }
+
+  req.user = { id: tokenRecord.userId.toString() };
+  return next();
 }

@@ -8,6 +8,9 @@ export interface IUserPreferences {
   longBreakInterval: number;
   soundEnabled: boolean;
   soundVolume: number;
+  alarmEnabled: boolean;
+  alarmVolume: number;
+  alarmSound: 'chime' | 'digital' | 'bell' | 'marimba';
   weekStartDay: 'monday' | 'sunday';
   timezone: string;
 }
@@ -30,6 +33,13 @@ const UserPreferencesSchema = new Schema<IUserPreferences>(
     longBreakInterval: { type: Number, default: 4 },
     soundEnabled: { type: Boolean, default: true },
     soundVolume: { type: Number, default: 70 },
+    alarmEnabled: { type: Boolean, default: true },
+    alarmVolume: { type: Number, default: 70 },
+    alarmSound: {
+      type: String,
+      enum: ['chime', 'digital', 'bell', 'marimba'],
+      default: 'chime',
+    },
     weekStartDay: { type: String, enum: ['monday', 'sunday'], default: 'monday' },
     timezone: { type: String, default: 'UTC' },
   },

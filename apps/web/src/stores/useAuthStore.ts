@@ -15,7 +15,6 @@ import {
   setOnAuthFailure,
 } from '../services/api/apiClient';
 import {
-  isSessionExpiredDueToInactivity,
   recordUserActivity,
   startActivityTracking,
   stopActivityTracking,
@@ -58,14 +57,8 @@ function startProactiveRefresh(): void {
   }
   // Refresh every 10 minutes (access token TTL is 15 minutes)
   proactiveRefreshTimer = setInterval(async () => {
-    const { status, logoutDueToInactivity } = useAuthStore.getState();
+    const { status } = useAuthStore.getState();
     if (status !== 'authenticated') return;
-
-    // Check if 72-hour inactivity deadline was exceeded
-    if (isSessionExpiredDueToInactivity()) {
-      await logoutDueToInactivity();
-      return;
-    }
 
     // Refresh access token seamlessly in background
     try {
@@ -136,27 +129,8 @@ export const useAuthStore = create<AuthState>((set, get) => {
     sessionExpiredMessage: null,
 
     initializeAuth: async () => {
-      // 1. Check if user exceeded 72 hours of inactivity while browser was closed
-      if (isSessionExpiredDueToInactivity()) {
-        clearActivityTracking();
-        stopProactiveRefresh();
-        setClientAccessToken(null);
-        try {
-          await apiClient.post('/auth/logout');
-        } catch {}
-
-        set({
-          user: null,
-          accessToken: null,
-          status: 'unauthenticated',
-          hasCheckedSession: true,
-          sessionExpiredMessage: INACTIVITY_EXPIRED_MESSAGE,
-        });
-        return;
-      }
-
       try {
-        // Attempt silent refresh once at startup
+        // Attempt silent refresh once at startup using persistent HttpOnly cookie
         const token = await silentRefreshToken();
         if (token) {
           setClientAccessToken(token);
@@ -174,10 +148,7 @@ export const useAuthStore = create<AuthState>((set, get) => {
             sessionExpiredMessage: null,
           });
 
-          // Start activity tracking and proactive refresh
-          startActivityTracking(() => {
-            get().logoutDueToInactivity();
-          });
+          // Start proactive refresh
           startProactiveRefresh();
           return;
         }
@@ -295,11 +266,6 @@ export const useAuthStore = create<AuthState>((set, get) => {
     },
 
     refreshSession: async () => {
-      if (isSessionExpiredDueToInactivity()) {
-        await get().logoutDueToInactivity();
-        return false;
-      }
-
       const token = await silentRefreshToken();
       if (token) {
         setClientAccessToken(token);
@@ -361,19 +327,14 @@ export const useAuthStore = create<AuthState>((set, get) => {
     handleAuthFailure: () => {
       stopProactiveRefresh();
       stopActivityTracking();
+      clearActivityTracking();
       setClientAccessToken(null);
-
-      // Check if this failure was due to inactivity
-      const isInactive = isSessionExpiredDueToInactivity();
-      if (isInactive) {
-        clearActivityTracking();
-      }
 
       set({
         user: null,
         accessToken: null,
         status: 'unauthenticated',
-        sessionExpiredMessage: isInactive ? INACTIVITY_EXPIRED_MESSAGE : null,
+        sessionExpiredMessage: null,
       });
     },
 

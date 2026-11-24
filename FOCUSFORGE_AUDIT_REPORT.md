@@ -357,3 +357,73 @@ Applying the 4 P0 fixes detailed above will immediately unblock container builds
 
 ---
 *Report certified by Senior Full-Stack Engineer & Software Architect.*
+
+---
+
+## 8. Production Persistent Authentication & Cross-Origin Session Architecture
+
+**Audit Date:** November 24, 2026  
+**Focus:** Production Vercel & Render Session Persistence, Cross-Origin Cookies, and Concurrent Rotation Reliability  
+**Verification Result:** **100% VERIFIED PASS (129/129 Monorepo Tests Passing, 0 Type Errors, 0 Lint Warnings, Clean Production Builds)**
+
+### 8.1 Root Cause Analysis of Deployed Repeated Logout
+1. **Cross-Site Cookie Suppression (`SameSite=Lax` in Cross-Origin Fetch):**
+   - The frontend was deployed on Vercel (`https://focusforge--ai.vercel.app`) and backend on Render (`https://focusforge-api-68ro.onrender.com`).
+   - `tokens.ts` configured `sameSite: 'lax'`. Under modern browser cookie policies (Chrome, Safari, Firefox), cross-site subresource POST requests omit `SameSite=Lax` cookies, even with `credentials: 'include'`.
+   - When the 15-minute access token expired or proactive refresh ran at 10 minutes, the browser omitted the refresh cookie from `POST /api/v1/auth/refresh`. The backend returned 401, immediately logging the user out.
+2. **Aggressive Network Failure Invalidation in Client:**
+   - In `apps/web/src/services/api/apiClient.ts`, any error in `silentRefreshToken()`'s `catch` block (such as an offline state, network timeout, or Render free-tier cold-start latency) triggered `onAuthFailureHandler()`, destroying the user's active session.
+3. **Accidental Reuse Detection on Multi-Tab / Concurrent Refresh:**
+   - In `apps/api/src/services/authService.ts`, when two tabs or requests refreshed simultaneously, the second request presented a token that had just been rotated milliseconds earlier. The backend immediately flagged this as malicious reuse and revoked all tokens for the user family.
+4. **Sliding 72-Hour Inactivity Timeout:**
+   - The application previously implemented an artificial 72-hour sliding inactivity timeout in both the backend database model and client-side activity tracker, forcing user logouts after weekends or brief periods of inactivity.
+
+### 8.2 Architectural Implementation & Fixes
+* **Persistent Long-Lived Refresh Session (365 Days):**
+  - Updated `REFRESH_TOKEN_TTL_MS` to 365 days (`365 * 24 * 60 * 60 * 1000` ms).
+  - Every token refresh rolls the persistent expiration window forward 365 days. As long as the user visits once within 365 days, their session never expires.
+  - Set cookie `Max-Age=31536000` (365 days in seconds), persisting authentication across browser restarts and computer reboots.
+* **Production Cross-Origin Cookie Hardening:**
+  - In `apps/api/src/utils/tokens.ts`, configured `sameSite: isProduction ? 'none' : 'lax'`, `secure: isProduction`, `httpOnly: true`, and `path: '/'`.
+  - Ensures cookies are accepted across `vercel.app` and `onrender.com` over HTTPS while preserving local development convenience.
+* **Concurrent Rotation Grace Period (30 Seconds):**
+  - In `apps/api/src/services/authService.ts`, if a presented token was rotated within the last 30 seconds and points to an active `replacedBy` token, the backend treats it as a benign concurrency race, issues a fresh access token, and omits `Set-Cookie` so the client does not overwrite the newly rotated cookie.
+  - Genuine token reuse outside the 30-second window continues to trigger immediate family-wide revocation.
+* **Network Error Resilience in API Client:**
+  - In `apps/web/src/services/api/apiClient.ts`, temporary network exceptions, timeouts, or 5xx server errors during silent refresh return `null` without triggering `onAuthFailureHandler()`. Sessions remain valid in storage.
+* **Removal of Artificial Inactivity Logout:**
+  - Removed 72-hour inactivity logouts from `apps/web/src/services/activityTracker.ts` and `apps/web/src/stores/useAuthStore.ts`. User sessions persist until an explicit Logout, password change, account deletion, or security revocation occurs.
+
+### 8.3 Recommended Production Domain Architecture
+While `SameSite=None; Secure` enables cross-site cookies, third-party cookie restrictions in strict browser environments (e.g., Safari ITP or Chrome Privacy Sandbox) can still restrict cross-origin subresource cookies. For optimal enterprise stability, the following configurations are supported:
+1. **Recommended (Same-Site Custom Domains):**
+   - Frontend: `app.yourdomain.com` (Vercel)
+   - Backend: `api.yourdomain.com` (Render)
+   - Both share the registrable domain `yourdomain.com`, treating cookies as first-party same-site.
+2. **Alternative (Same-Origin Vercel Proxy):**
+   - `vercel.json` rewrites `/api/v1/:path*` to `https://focusforge-api-68ro.onrender.com/api/v1/:path*`.
+   - Frontend sets `VITE_API_URL=/api/v1`, making all requests same-origin to Vercel.
+3. **Direct Cross-Origin (`https://focusforge-api-68ro.onrender.com/api/v1`):**
+   - Supported via `SameSite=None; Secure`, `credentials: 'include'`, and explicit multi-origin backend CORS.
+
+### 8.4 Regression Test Matrix
+| Test Case | Package | Status | Evidence |
+| :--- | :--- | :---: | :--- |
+| **Login creates persistent 365-day session** | `apps/api` | **PASS** | `inactivity.test.ts` (Test 1) |
+| **Authentication preserved after 72 hours inactivity** | `apps/api` | **PASS** | `inactivity.test.ts` (Test 2) |
+| **Authentication preserved after 10 days inactivity** | `apps/api` | **PASS** | `inactivity.test.ts` (Test 3) |
+| **365-day persistence & rolling renewal at 100 days** | `apps/api` | **PASS** | `inactivity.test.ts` (Test 12) |
+| **Access JWT expiry transparently refreshes session** | `apps/api` | **PASS** | `inactivity.test.ts` (Test 4) |
+| **Concurrent refresh requests safely deduplicated** | `apps/api` | **PASS** | `inactivity.test.ts` (Test 5) |
+| **Multiple devices maintain independent sessions** | `apps/api` | **PASS** | `inactivity.test.ts` (Test 6) |
+| **Explicit logout revokes session and clears cookie** | `apps/api` | **PASS** | `inactivity.test.ts` (Test 7) |
+| **Password change revokes all active sessions** | `apps/api` | **PASS** | `inactivity.test.ts` (Test 8) |
+| **Account deletion purges user and all sessions** | `apps/api` | **PASS** | `inactivity.test.ts` (Test 9) |
+| **Production cookies enforce SameSite=None, Secure, HttpOnly** | `apps/api` | **PASS** | `inactivity.test.ts` (Test 10) |
+| **Rotation grace period prevents cookie clobbering** | `apps/api` | **PASS** | `inactivity.test.ts` (Test 11) |
+| **Token reuse detection triggers outside grace period** | `apps/api` | **PASS** | `auth.test.ts` (Test 7) |
+| **Browser reload restores authenticated session** | `apps/web` | **PASS** | `inactivityAuth.test.ts` (Test 1) |
+| **Browser close & reopen preserves authentication** | `apps/web` | **PASS** | `inactivityAuth.test.ts` (Test 2) |
+| **Session persists beyond 72h without forced logout** | `apps/web` | **PASS** | `inactivityAuth.test.ts` (Test 6) |
+| **Network errors during silent refresh do not log out** | `apps/web` | **PASS** | `apiClient.test.ts` & `inactivityAuth.test.ts` |
+

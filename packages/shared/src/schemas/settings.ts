@@ -6,6 +6,9 @@ export type Theme = z.infer<typeof ThemeSchema>;
 export const WeekStartDaySchema = z.enum(['monday', 'sunday']);
 export type WeekStartDay = z.infer<typeof WeekStartDaySchema>;
 
+export const AlarmSoundSchema = z.enum(['chime', 'digital', 'bell', 'marimba']);
+export type AlarmSound = z.infer<typeof AlarmSoundSchema>;
+
 export const SettingsSchema = z.object({
   theme: ThemeSchema.default('dark'),
   focusDuration: z.number().int().min(1).max(180).default(25), // in minutes
@@ -14,6 +17,9 @@ export const SettingsSchema = z.object({
   longBreakInterval: z.number().int().min(1).max(12).default(4),
   soundEnabled: z.boolean().default(true),
   soundVolume: z.number().min(0).max(100).default(70),
+  alarmEnabled: z.boolean().default(true),
+  alarmVolume: z.number().min(0).max(100).default(70),
+  alarmSound: AlarmSoundSchema.default('chime'),
   weekStartDay: WeekStartDaySchema.default('monday'),
   timezone: z.string().default('UTC'),
   demoDataLoaded: z.boolean().default(true),

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import request from 'supertest';
 import { app } from '../src/app.js';
 import { createTestUser } from './helpers.js';
-import { REFRESH_COOKIE_NAME } from '../src/utils/tokens.js';
+import { REFRESH_COOKIE_NAME, hashToken } from '../src/utils/tokens.js';
 import { User } from '../src/models/User.js';
 import { Task } from '../src/models/Task.js';
 import { RefreshToken } from '../src/models/RefreshToken.js';
@@ -125,7 +125,18 @@ describe('Authentication & Session Lifecycle', () => {
     const rotatedToken = newMatch![1];
     expect(rotatedToken).not.toBe(originalToken);
 
-    // 2. Reuse detection: presenting the already-revoked original token
+    // Mark rotated token as used so subsequent presentation of originalToken is genuine reuse
+    await request(app)
+      .post('/api/v1/auth/activity')
+      .set('Cookie', [`${REFRESH_COOKIE_NAME}=${rotatedToken}`]);
+
+    // 2. Reuse detection: presenting the already-revoked original token outside the grace period
+    // Simulate time elapsed past the 30-second concurrent rotation grace period
+    await RefreshToken.updateOne(
+      { tokenHash: hashToken(originalToken) },
+      { revokedAt: new Date(Date.now() - 35 * 1000) }
+    );
+
     const reuseRes = await request(app)
       .post('/api/v1/auth/refresh')
       .set('Cookie', [`${REFRESH_COOKIE_NAME}=${originalToken}`]);

@@ -6,7 +6,6 @@ import {
   getLastActiveTime,
   setLastActiveTime,
   isSessionExpiredDueToInactivity,
-  INACTIVITY_EXPIRED_MESSAGE,
   LAST_ACTIVE_KEY,
 } from '../src/services/activityTracker';
 import type { UserProfile } from '@focusforge/shared';
@@ -61,6 +60,9 @@ describe('72-Hour Inactivity Timeout & Persistent Login', () => {
       longBreakInterval: 4,
       soundEnabled: true,
       soundVolume: 70,
+      alarmEnabled: true,
+      alarmVolume: 70,
+      alarmSound: 'chime',
       weekStartDay: 'monday',
       timezone: 'UTC',
     },
@@ -208,16 +210,30 @@ describe('72-Hour Inactivity Timeout & Persistent Login', () => {
     expect(isSessionExpiredDueToInactivity()).toBe(false);
   });
 
-  it('6. Inactivity beyond 72 hours: automatically logs out and displays required message', async () => {
+  it('6. Inactivity beyond 72 hours: does NOT automatically log out and preserves session', async () => {
     const baseNow = 1700000000000;
     vi.setSystemTime(baseNow);
     setLastActiveTime(baseNow);
 
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ success: true }),
-    } as unknown as Response);
+    global.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes('/auth/refresh')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => ({ success: true, data: { accessToken: 'token-after-4-days' } }),
+        };
+      }
+      if (url.includes('/auth/me')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => ({ success: true, data: mockUser }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    });
 
     useAuthStore.setState({
       user: mockUser,
@@ -227,20 +243,21 @@ describe('72-Hour Inactivity Timeout & Persistent Login', () => {
       sessionExpiredMessage: null,
     });
 
-    // Advance 72 hours and 5 minutes (inactivity expired)
-    vi.advanceTimersByTime(72 * 60 * 60 * 1000 + 5 * 60 * 1000);
+    // Advance 96 hours (4 days of complete inactivity)
+    vi.advanceTimersByTime(96 * 60 * 60 * 1000);
 
-    expect(isSessionExpiredDueToInactivity()).toBe(true);
+    // Policy check: user is NOT considered expired
+    expect(isSessionExpiredDueToInactivity()).toBe(false);
 
-    // Trigger logout due to inactivity
-    await useAuthStore.getState().logoutDueToInactivity();
+    // Refreshing session succeeds transparently
+    const success = await useAuthStore.getState().refreshSession();
+    expect(success).toBe(true);
 
     const state = useAuthStore.getState();
-    expect(state.status).toBe('unauthenticated');
-    expect(state.user).toBeNull();
-    expect(getAccessToken()).toBeNull();
-    expect(state.sessionExpiredMessage).toBe(INACTIVITY_EXPIRED_MESSAGE);
-    expect(state.sessionExpiredMessage).toBe('Your session expired due to 3 days of inactivity.');
+    expect(state.status).toBe('authenticated');
+    expect(state.user?.name).toBe('Alex Rivera');
+    expect(getAccessToken()).toBe('token-after-4-days');
+    expect(state.sessionExpiredMessage).toBeNull();
   });
 
   it('7. Access token expiration and automatic proactive background refresh', async () => {
@@ -350,5 +367,29 @@ describe('72-Hour Inactivity Timeout & Persistent Login', () => {
     // In-flight refresh mutex must ensure only 1 network fetch occurred
     expect(refreshNetworkCalls).toBe(1);
     expect(getAccessToken()).toBe('concurrent-refreshed-token');
+  });
+
+  it('10. Temporary network failures do not destroy an authenticated user session', async () => {
+    useAuthStore.setState({
+      user: mockUser,
+      accessToken: 'valid-session-token',
+      status: 'authenticated',
+      hasCheckedSession: true,
+      sessionExpiredMessage: null,
+    });
+    setAccessToken('valid-session-token');
+
+    // Simulate network connection failure on background refresh
+    global.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+
+    // Trigger proactive refresh interval
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+
+    // User session must remain completely intact despite network drop
+    const state = useAuthStore.getState();
+    expect(state.status).toBe('authenticated');
+    expect(state.user?.name).toBe('Alex Rivera');
+    expect(getAccessToken()).toBe('valid-session-token');
+    expect(state.sessionExpiredMessage).toBeNull();
   });
 });

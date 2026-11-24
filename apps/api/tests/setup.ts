@@ -10,7 +10,7 @@ process.env.JWT_ACCESS_SECRET = 'test_access_secret_1234567890_secure_long';
 process.env.JWT_REFRESH_SECRET = 'test_refresh_secret_1234567890_secure_long';
 process.env.CLIENT_ORIGIN = 'http://localhost:5173';
 process.env.ACCESS_TOKEN_TTL = '15m';
-process.env.REFRESH_TOKEN_TTL = '7d';
+process.env.REFRESH_TOKEN_TTL = process.env.REFRESH_TOKEN_TTL || '365d';
 
 let mongod: MongoMemoryServer;
 

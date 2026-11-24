@@ -2,9 +2,11 @@ import mongoose, { Schema, Document, Model, Types } from 'mongoose';
 
 export interface IRefreshToken extends Document {
   userId: Types.ObjectId;
+  sessionId?: Types.ObjectId | null;
   tokenHash: string;
   expiresAt: Date;
   lastActiveAt: Date;
+  firstUsedAt?: Date | null;
   revokedAt?: Date | null;
   replacedBy?: string | null;
   createdAt: Date;
@@ -19,6 +21,12 @@ const RefreshTokenSchema = new Schema<IRefreshToken>(
       required: true,
       index: true,
     },
+    sessionId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Session',
+      default: null,
+      index: true,
+    },
     tokenHash: {
       type: String,
       required: true,
@@ -31,6 +39,10 @@ const RefreshTokenSchema = new Schema<IRefreshToken>(
     lastActiveAt: {
       type: Date,
       default: Date.now,
+    },
+    firstUsedAt: {
+      type: Date,
+      default: null,
     },
     revokedAt: {
       type: Date,

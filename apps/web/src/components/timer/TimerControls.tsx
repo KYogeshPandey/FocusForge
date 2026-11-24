@@ -1,22 +1,26 @@
-import { Play, Pause, RotateCcw, SkipForward } from 'lucide-react';
+import { Play, Pause, RotateCcw, SkipForward, BellOff } from 'lucide-react';
 import { Button } from '../ui/Button';
 
 export interface TimerControlsProps {
   status: 'idle' | 'running' | 'paused';
+  isAlarmActive?: boolean;
   onStart: () => void;
   onPause: () => void;
   onResume: () => void;
   onReset: () => void;
   onSkip: () => void;
+  onPauseAlarm?: () => void;
 }
 
 export function TimerControls({
   status,
+  isAlarmActive,
   onStart,
   onPause,
   onResume,
   onReset,
   onSkip,
+  onPauseAlarm,
 }: TimerControlsProps) {
   const isRunning = status === 'running';
 
@@ -33,8 +37,18 @@ export function TimerControls({
         <RotateCcw className="w-5 h-5 text-text-muted hover:text-text" />
       </Button>
 
-      {/* Main Start / Pause / Resume Button */}
-      {isRunning ? (
+      {/* Main Start / Pause / Resume / Pause Alarm Button */}
+      {isAlarmActive ? (
+        <Button
+          size="lg"
+          onClick={onPauseAlarm}
+          className="w-40 h-12 text-base font-bold gap-2 shadow-lg bg-primary hover:bg-primary/90 text-black animate-pulse"
+          aria-label="Pause Alarm"
+        >
+          <BellOff className="w-5 h-5" />
+          Pause Alarm
+        </Button>
+      ) : isRunning ? (
         <Button
           size="lg"
           onClick={onPause}

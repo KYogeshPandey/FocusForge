@@ -203,6 +203,44 @@ describe('API Client (Native Fetch Wrapper)', () => {
     expect(onAuthFailureMock).toHaveBeenCalled();
   });
 
+  it('does not trigger auth failure or clear session on temporary network errors during silent refresh', async () => {
+    const onAuthFailureMock = vi.fn();
+    setOnAuthFailure(onAuthFailureMock);
+    setAccessToken('existing-access-token');
+
+    // Simulate network error (e.g. TypeError: Failed to fetch)
+    global.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+
+    const result = await silentRefreshToken();
+
+    expect(result).toBeNull();
+    // Auth failure callback MUST NOT be triggered on temporary network error
+    expect(onAuthFailureMock).not.toHaveBeenCalled();
+    // Access token must NOT be wiped by a network glitch
+    expect(getAccessToken()).toBe('existing-access-token');
+  });
+
+  it('does not trigger auth failure or clear session on server 5xx errors during silent refresh', async () => {
+    const onAuthFailureMock = vi.fn();
+    setOnAuthFailure(onAuthFailureMock);
+    setAccessToken('existing-access-token');
+
+    // Simulate server 500 error
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ success: false, error: { message: 'Internal Server Error' } }),
+    } as unknown as Response);
+
+    const result = await silentRefreshToken();
+
+    expect(result).toBeNull();
+    // Server 5xx errors must NOT log the user out
+    expect(onAuthFailureMock).not.toHaveBeenCalled();
+    expect(getAccessToken()).toBe('existing-access-token');
+  });
+
   it('converts 429 status into clear rate-limiting ApiError message', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,

@@ -5,6 +5,7 @@ import { Topbar } from './Topbar';
 import { MobileNav } from './MobileNav';
 import { DemoBanner } from './DemoBanner';
 import { OfflineBanner } from './OfflineBanner';
+import { AlarmAlert } from '../timer/AlarmAlert';
 import { DataMigrationModal } from '../auth/DataMigrationModal';
 import { SkipToContent } from './SkipToContent';
 import { ToastContainer } from '../ui/Toast';
@@ -68,6 +69,7 @@ export function AppLayout() {
       >
         <OfflineBanner />
         <DemoBanner />
+        <AlarmAlert variant="banner" />
         <Topbar />
 
         <main id="main-content" className="flex-1 focus:outline-none" tabIndex={-1}>

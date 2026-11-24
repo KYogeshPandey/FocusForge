@@ -1,5 +1,5 @@
 import { ApiError } from './apiError';
-import { isSessionExpiredDueToInactivity, setLastActiveTime } from '../activityTracker';
+import { setLastActiveTime } from '../activityTracker';
 
 const DEFAULT_API_URL = 'http://localhost:5000/api/v1';
 
@@ -43,13 +43,6 @@ if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
 let activeRefreshPromise: Promise<string | null> | null = null;
 
 export async function silentRefreshToken(): Promise<string | null> {
-  // If user has been inactive for 72+ hours, refuse to refresh
-  if (isSessionExpiredDueToInactivity()) {
-    setAccessToken(null);
-    if (onAuthFailureHandler) onAuthFailureHandler();
-    return null;
-  }
-
   if (activeRefreshPromise) {
     return activeRefreshPromise;
   }
@@ -65,8 +58,11 @@ export async function silentRefreshToken(): Promise<string | null> {
       });
 
       if (!response.ok) {
-        setAccessToken(null);
-        if (onAuthFailureHandler) onAuthFailureHandler();
+        // Only definitive 401 Unauthorized indicates a dead/expired/revoked session
+        if (response.status === 401) {
+          setAccessToken(null);
+          if (onAuthFailureHandler) onAuthFailureHandler();
+        }
         return null;
       }
 
@@ -85,12 +81,10 @@ export async function silentRefreshToken(): Promise<string | null> {
         return newToken;
       }
 
-      setAccessToken(null);
-      if (onAuthFailureHandler) onAuthFailureHandler();
       return null;
     } catch {
-      setAccessToken(null);
-      if (onAuthFailureHandler) onAuthFailureHandler();
+      // Network failure, timeout, or offline:
+      // DO NOT call onAuthFailureHandler()! Keep persistent session intact for retry.
       return null;
     } finally {
       activeRefreshPromise = null;

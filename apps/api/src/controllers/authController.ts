@@ -59,13 +59,15 @@ export class AuthController {
     const token = req.cookies?.[REFRESH_COOKIE_NAME];
     const result = await authService.refresh(token);
 
-    // Check 3: Cookie maxAge must reflect the remaining server-side session lifetime, not blindly reset to 72h
-    const remainingMs = Math.max(0, result.expiresAt.getTime() - Date.now());
-    res.cookie(
-      REFRESH_COOKIE_NAME,
-      result.newRefreshTokenString,
-      getRefreshTokenCookieOptions(remainingMs)
-    );
+    // Only set cookie if a new refresh token was generated (avoids clobbering cookie during concurrent grace window)
+    if (result.newRefreshTokenString) {
+      const remainingMs = Math.max(0, result.expiresAt.getTime() - Date.now());
+      res.cookie(
+        REFRESH_COOKIE_NAME,
+        result.newRefreshTokenString,
+        getRefreshTokenCookieOptions(remainingMs)
+      );
+    }
 
     sendSuccess(res, {
       accessToken: result.accessToken,
@@ -86,8 +88,7 @@ export class AuthController {
 
   async recordActivity(req: Request, res: Response): Promise<void> {
     const token = req.cookies?.[REFRESH_COOKIE_NAME];
-    const userId = req.user?.id;
-    const result = await authService.recordActivity(token, userId);
+    const result = await authService.recordActivity(token);
 
     // Only update cookie if token was not concurrently rotated (avoids clobbering rotated cookie)
     if (result && token && !result.isRotated) {
