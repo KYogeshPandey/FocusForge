@@ -88,17 +88,10 @@ export class AuthController {
 
   async recordActivity(req: Request, res: Response): Promise<void> {
     const token = req.cookies?.[REFRESH_COOKIE_NAME];
-    const result = await authService.recordActivity(token);
+    await authService.recordActivity(token);
 
-    // Only update cookie if token was not concurrently rotated (avoids clobbering rotated cookie)
-    if (result && token && !result.isRotated) {
-      const remainingMs = Math.max(0, result.expiresAt.getTime() - Date.now());
-      res.cookie(
-        REFRESH_COOKIE_NAME,
-        token,
-        getRefreshTokenCookieOptions(remainingMs)
-      );
-    }
+    // Do not write Set-Cookie from /activity: cookie renewal happens exclusively on login/register/refresh
+    // to prevent delayed activity responses from overwriting a newer rotated refresh cookie.
     sendSuccess(res, { message: 'Activity recorded' });
   }
 

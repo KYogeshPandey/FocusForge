@@ -6,6 +6,7 @@ import {
   setOnAuthFailure,
   silentRefreshToken,
   BASE_URL,
+  resolveApiBaseUrl,
 } from '../src/services/api/apiClient';
 import { ApiError } from '../src/services/api/apiError';
 
@@ -288,7 +289,7 @@ describe('API Client (Native Fetch Wrapper)', () => {
     vi.resetModules();
   });
 
-  it('falls back to default localhost URL when VITE_API_URL is absent', async () => {
+  it('falls back to default localhost URL when VITE_API_URL is absent in non-prod', async () => {
     vi.resetModules();
     vi.unstubAllEnvs();
 
@@ -296,6 +297,66 @@ describe('API Client (Native Fetch Wrapper)', () => {
     expect(defaultModule.BASE_URL).toBe('http://localhost:5000/api/v1');
 
     vi.resetModules();
+  });
+
+  it('defaults BASE_URL to /api/v1 in production builds when VITE_API_URL is absent', () => {
+    expect(resolveApiBaseUrl({ viteApiUrl: undefined, isProd: true })).toBe('/api/v1');
+    expect(resolveApiBaseUrl({ viteApiUrl: '', isProd: true })).toBe('/api/v1');
+    expect(resolveApiBaseUrl({ viteApiUrl: undefined, isProd: false })).toBe(
+      'http://localhost:5000/api/v1'
+    );
+    expect(
+      resolveApiBaseUrl({ viteApiUrl: 'https://custom.example.com/api/v1/', isProd: true })
+    ).toBe('https://custom.example.com/api/v1');
+  });
+
+  it('sends POST /auth/refresh with credentials include during silentRefreshToken', async () => {
+    vi.resetModules();
+    vi.stubEnv('VITE_API_URL', '/api/v1');
+    const proxyModule = await import('../src/services/api/apiClient');
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ success: true, data: { accessToken: 'proxy-refreshed-jwt' } }),
+    } as unknown as Response);
+
+    const refreshed = await proxyModule.silentRefreshToken();
+    expect(refreshed).toBe('proxy-refreshed-jwt');
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/v1/auth/refresh',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+      })
+    );
+
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it('does not trigger auth failure or clear access token when /auth/activity returns 401', async () => {
+    const onAuthFailureMock = vi.fn();
+    setOnAuthFailure(onAuthFailureMock);
+    setAccessToken('valid-in-memory-jwt');
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({
+        success: false,
+        error: { code: 'UNAUTHORIZED', message: 'Authentication session required' },
+      }),
+    } as unknown as Response);
+
+    await expect(apiClient.post('/auth/activity')).rejects.toThrow(
+      'Authentication session required'
+    );
+
+    expect(onAuthFailureMock).not.toHaveBeenCalled();
+    expect(getAccessToken()).toBe('valid-in-memory-jwt');
   });
 
   it('constructs endpoint paths correctly with BASE_URL', async () => {

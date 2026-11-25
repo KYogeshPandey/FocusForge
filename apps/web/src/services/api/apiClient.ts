@@ -2,9 +2,19 @@ import { ApiError } from './apiError';
 import { setLastActiveTime } from '../activityTracker';
 
 const DEFAULT_API_URL = 'http://localhost:5000/api/v1';
+const DEFAULT_PROD_API_URL = '/api/v1';
 
-const rawBaseUrl = import.meta.env.VITE_API_URL || DEFAULT_API_URL;
-export const BASE_URL: string = rawBaseUrl.endsWith('/') ? rawBaseUrl.slice(0, -1) : rawBaseUrl;
+export function resolveApiBaseUrl(options?: {
+  viteApiUrl?: string;
+  isProd?: boolean;
+}): string {
+  const viteApiUrl = options ? options.viteApiUrl : import.meta.env.VITE_API_URL;
+  const isProd = options?.isProd ?? import.meta.env.PROD;
+  const rawBaseUrl = viteApiUrl || (isProd ? DEFAULT_PROD_API_URL : DEFAULT_API_URL);
+  return rawBaseUrl.endsWith('/') ? rawBaseUrl.slice(0, -1) : rawBaseUrl;
+}
+
+export const BASE_URL: string = resolveApiBaseUrl();
 
 // In-memory access token storage (never placed in localStorage / sessionStorage)
 let inMemoryAccessToken: string | null = null;

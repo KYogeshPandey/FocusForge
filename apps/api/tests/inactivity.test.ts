@@ -296,10 +296,10 @@ describe('Persistent Authentication & Session Lifecycle', () => {
     expect(activityRes.status).toBe(200);
     expect(activityRes.body.success).toBe(true);
 
-    // Activity must NOT set a cookie for the stale, rotated token
+    // Activity must NOT write any refresh cookie at all
     const activityCookies = activityRes.headers['set-cookie'] || [];
-    const clobberedCookie = activityCookies.find((c: string) => c.includes(user.refreshToken));
-    expect(clobberedCookie).toBeUndefined();
+    const hasRefreshCookie = activityCookies.some((c: string) => c.startsWith(`${REFRESH_COOKIE_NAME}=`));
+    expect(hasRefreshCookie).toBe(false);
 
     // Verify in DB that the replacement token (token2) was extended by activity
     const record2 = await RefreshToken.findOne({ tokenHash: hashToken(token2) });
@@ -677,9 +677,9 @@ describe('Persistent Authentication & Session Lifecycle', () => {
       .set('Cookie', [`${REFRESH_COOKIE_NAME}=${tokenA}`]);
     expect(activityRes.status).toBe(200);
 
-    // Does NOT set cookie for old token A
+    // Does NOT emit any refresh Set-Cookie header
     const setCookies = activityRes.headers['set-cookie'] || [];
-    expect(setCookies.some((c: string) => c.includes(tokenA))).toBe(false);
+    expect(setCookies.some((c: string) => c.startsWith(`${REFRESH_COOKIE_NAME}=`))).toBe(false);
 
     // Terminal token C in DB was extended
     const recordC = await RefreshToken.findOne({ tokenHash: hashToken(tokenC) });
@@ -1222,5 +1222,37 @@ describe('Persistent Authentication & Session Lifecycle', () => {
 
     expect(refreshRes.status).toBe(401);
     expect(refreshRes.body.error.message).toContain('Invalid session timestamp');
+  });
+
+  it('38. Activity endpoint extends DB session without emitting Set-Cookie (prevents overwriting concurrent rotation)', async () => {
+    const baseNow = 1700000000000;
+    vi.setSystemTime(baseNow);
+
+    const user = await createTestUser('Activity NoCookie User', 'activity-nocookie@example.com', 'password123');
+    const tokenA = user.refreshToken;
+
+    // Advance 1 hour and call /activity with active token A
+    vi.advanceTimersByTime(60 * 60 * 1000);
+
+    const activityRes = await request(app)
+      .post('/api/v1/auth/activity')
+      .set('Cookie', [`${REFRESH_COOKIE_NAME}=${tokenA}`]);
+
+    expect(activityRes.status).toBe(200);
+    expect(activityRes.body.success).toBe(true);
+
+    // Must NOT emit Set-Cookie for REFRESH_COOKIE_NAME even when token is active (unrotated)
+    const setCookies = activityRes.headers['set-cookie'] || [];
+    expect(setCookies.some((c: string) => c.startsWith(`${REFRESH_COOKIE_NAME}=`))).toBe(false);
+
+    // DB token and session expiries were still rolled forward by 1 hour
+    const updatedRecord = await RefreshToken.findOne({ tokenHash: hashToken(tokenA) });
+    expect(updatedRecord).not.toBeNull();
+    expect(updatedRecord!.lastActiveAt.getTime()).toBe(baseNow + 60 * 60 * 1000);
+    expect(updatedRecord!.expiresAt.getTime()).toBe(baseNow + 60 * 60 * 1000 + REFRESH_TOKEN_TTL_MS);
+
+    const updatedSession = await Session.findById(updatedRecord!.sessionId);
+    expect(updatedSession).not.toBeNull();
+    expect(updatedSession!.expiresAt.getTime()).toBe(baseNow + 60 * 60 * 1000 + REFRESH_TOKEN_TTL_MS);
   });
 });

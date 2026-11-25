@@ -97,7 +97,7 @@ Configure these variables under the **Environment** tab on Render:
 | `JWT_ACCESS_SECRET` | *Min 32 random characters* | **Yes** | Cryptographic secret for signing 15-minute access tokens. |
 | `JWT_REFRESH_SECRET` | *Min 32 random characters* | **Yes** | Cryptographic secret for signing 7-day refresh tokens. |
 | `ACCESS_TOKEN_TTL` | `15m` | No | Access token lifespan (default `15m`). |
-| `REFRESH_TOKEN_TTL` | `7d` | No | Refresh token cookie lifespan (default `7d`). |
+| `REFRESH_TOKEN_TTL` | `365d` | No | Refresh token cookie lifespan (default `365d`). |
 | `CLIENT_ORIGIN` | `https://your-app.vercel.app` | **Yes** | Allowed CORS origin (must match your frontend domain exactly). |
 | `RATE_LIMIT_WINDOW_MINUTES` | `15` | No | General IP rate limit window in minutes (default `15`). |
 | `RATE_LIMIT_MAX_REQUESTS` | `300` | No | Max requests per IP in window (default `300`). |
@@ -139,7 +139,7 @@ Configure under **Environment Variables** in Vercel:
 
 | Variable | Value | Description |
 | :--- | :--- | :--- |
-| `VITE_API_URL` | `https://<your-render-service>.onrender.com/api/v1` | URL of your deployed Render backend API |
+| `VITE_API_URL` | `/api/v1` | Same-origin API path proxied through Vercel rewrites (prevents third-party cookie blocking) |
 
 Click **Deploy**.
 

@@ -24,7 +24,7 @@ services:
       - key: ACCESS_TOKEN_TTL
         value: 15m
       - key: REFRESH_TOKEN_TTL
-        value: 7d
+        value: 365d
       - key: CLIENT_ORIGIN
         sync: false # Set to frontend production domain(s), comma-separated (e.g. https://focusforge--ai.vercel.app,https://focusforge-six-ebon.vercel.app)
       - key: RATE_LIMIT_WINDOW_MINUTES

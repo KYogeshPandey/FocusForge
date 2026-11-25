@@ -69,7 +69,7 @@ Add the following in **Environment**:
 | `JWT_ACCESS_SECRET` | *32+ char random string* | Secret used to sign short-lived access JWTs |
 | `JWT_REFRESH_SECRET` | *32+ char random string* | Secret used to sign refresh token cookies |
 | `ACCESS_TOKEN_TTL` | `15m` | Lifetime of in-memory access token |
-| `REFRESH_TOKEN_TTL` | `7d` | Lifetime of refresh token cookie |
+| `REFRESH_TOKEN_TTL` | `365d` | Lifetime of refresh token cookie |
 | `CLIENT_ORIGIN` | `https://focusforge.vercel.app` | URL of your deployed frontend |
 | `RATE_LIMIT_WINDOW_MINUTES` | `15` | Window duration for IP rate limiting |
 | `RATE_LIMIT_MAX_REQUESTS` | `300` | Max requests per window |
@@ -98,7 +98,7 @@ Click **Create Web Service**.
 ### Step 3: Configure Environment Variables
 | Variable | Value | Description |
 | :--- | :--- | :--- |
-| `VITE_API_URL` | `https://focusforge-api.onrender.com/api/v1` | URL of your deployed Render API service |
+| `VITE_API_URL` | `/api/v1` | Same-origin API path proxied via Vercel rewrites to Render |
 
 Click **Deploy**.
 
