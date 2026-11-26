@@ -16,6 +16,7 @@ import {
 import { useGoal, useUpdateGoal } from '../hooks/useGoals';
 import { useThemeStore } from '../stores/useThemeStore';
 import { useToastStore } from '../stores/useToastStore';
+import { useTimerStore } from '../stores/useTimerStore';
 import { Card, CardHeader, CardTitle, CardDescription } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -66,7 +67,7 @@ export default function SettingsPage() {
       focusDuration: 25,
       shortBreakDuration: 5,
       longBreakDuration: 15,
-      longBreakInterval: 4,
+      longBreakInterval: 5,
       soundEnabled: true,
       soundVolume: 70,
       alarmEnabled: true,
@@ -90,7 +91,7 @@ export default function SettingsPage() {
         focusDuration: settings.focusDuration,
         shortBreakDuration: settings.shortBreakDuration,
         longBreakDuration: settings.longBreakDuration,
-        longBreakInterval: settings.longBreakInterval,
+        longBreakInterval: 5,
         soundEnabled: settings.soundEnabled,
         soundVolume: settings.soundVolume,
         alarmEnabled: settings.alarmEnabled ?? settings.soundEnabled ?? true,
@@ -109,7 +110,8 @@ export default function SettingsPage() {
 
   const onSaveSettings = async (data: UpdateSettingsInput) => {
     try {
-      await updateSettings.mutateAsync(data);
+      const updated = await updateSettings.mutateAsync({ ...data, longBreakInterval: 5 });
+      useTimerStore.getState().applySettings(updated);
       if (weeklyGoalMinutes !== goal?.targetMinutesWeekly) {
         await updateGoal.mutateAsync({ targetMinutesWeekly: weeklyGoalMinutes });
       }
@@ -242,12 +244,12 @@ export default function SettingsPage() {
             </div>
           </CardHeader>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
             <Input
               type="number"
               label="Focus Duration"
               min={1}
-              max={120}
+              max={180}
               hint="Default: 25m"
               {...register('focusDuration', { valueAsNumber: true })}
             />
@@ -256,7 +258,7 @@ export default function SettingsPage() {
               type="number"
               label="Short Break"
               min={1}
-              max={30}
+              max={60}
               hint="Default: 5m"
               {...register('shortBreakDuration', { valueAsNumber: true })}
             />
@@ -265,20 +267,14 @@ export default function SettingsPage() {
               type="number"
               label="Long Break"
               min={1}
-              max={60}
+              max={90}
               hint="Default: 15m"
               {...register('longBreakDuration', { valueAsNumber: true })}
             />
-
-            <Input
-              type="number"
-              label="Rounds for Long Break"
-              min={1}
-              max={12}
-              hint="Default: 4 rounds"
-              {...register('longBreakInterval', { valueAsNumber: true })}
-            />
           </div>
+          <p className="text-xs text-text-muted mt-3">
+            Long break triggers automatically after every 5 completed focus rounds.
+          </p>
         </Card>
 
         {/* Audio & Notifications */}

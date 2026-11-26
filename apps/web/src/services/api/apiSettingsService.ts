@@ -12,7 +12,7 @@ export class ApiSettingsService implements ISettingsService {
       focusDuration: prefs.focusDuration ?? 25,
       shortBreakDuration: prefs.shortBreakDuration ?? 5,
       longBreakDuration: prefs.longBreakDuration ?? 15,
-      longBreakInterval: prefs.longBreakInterval ?? 4,
+      longBreakInterval: 5,
       soundEnabled: prefs.soundEnabled ?? true,
       soundVolume: prefs.soundVolume ?? 70,
       alarmEnabled: prefs.alarmEnabled ?? prefs.soundEnabled ?? true,
@@ -30,6 +30,9 @@ export class ApiSettingsService implements ISettingsService {
     const prefFields = { ...input };
     delete prefFields.userName;
     delete prefFields.demoDataLoaded;
+    if (prefFields.longBreakInterval !== undefined) {
+      prefFields.longBreakInterval = 5;
+    }
 
     await apiClient.patch<UserProfile>('/auth/me', {
       ...(name !== undefined ? { name } : {}),

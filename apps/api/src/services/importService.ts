@@ -209,6 +209,7 @@ export class ImportService {
           user.preferences = {
             ...user.preferences,
             ...data.settings,
+            longBreakInterval: 5,
           };
           await user.save(sessionOpt);
           settingsUpdated = true;

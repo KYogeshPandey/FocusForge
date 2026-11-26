@@ -8,6 +8,7 @@ import { ModeSwitcher } from '../components/timer/ModeSwitcher';
 import { TimerControls } from '../components/timer/TimerControls';
 import { RoundIndicator } from '../components/timer/RoundIndicator';
 import { AlarmAlert } from '../components/timer/AlarmAlert';
+import { DurationCustomizationPanel } from '../components/timer/DurationCustomizationPanel';
 import { Card } from '../components/ui/Card';
 import { formatDuration, isDateToday } from '../utils/dates';
 import { cn } from '../utils/cn';
@@ -27,6 +28,10 @@ export default function FocusTimerPage() {
     taskFocusMinutesLogged,
     isTaskComplete,
     isAlarmActive,
+    focusDuration,
+    shortBreakDuration,
+    longBreakDuration,
+    longBreakInterval,
     subject,
     taskId,
     taskTitle,
@@ -38,6 +43,8 @@ export default function FocusTimerPage() {
     pauseAlarm,
     setMode,
     setSubject,
+    setCustomDurations,
+    resetDefaults,
     setLinkedTask,
   } = useTimerStore();
 
@@ -67,7 +74,13 @@ export default function FocusTimerPage() {
         const existingLogged = focusSessions
           .filter((s: FocusSession) => s.taskId === task.id && s.mode === 'focus')
           .reduce((acc: number, s: FocusSession) => acc + s.durationMinutes, 0);
-        setLinkedTask(task.id, task.title, task.subject, task.estimatedMinutes, existingLogged);
+        setLinkedTask(
+          task.id,
+          task.title,
+          task.subject,
+          task.estimatedMinutes,
+          existingLogged
+        );
       }
     }
   };
@@ -144,8 +157,12 @@ export default function FocusTimerPage() {
             completedRounds={completedRounds}
             currentRound={currentRound}
             totalRounds={totalRounds}
-            longBreakInterval={4}
+            longBreakInterval={longBreakInterval}
           />
+          <div className="mt-2 text-[11px] font-medium text-text-muted tabular-nums text-center">
+            Selected: {focusDuration}m focus · {shortBreakDuration}m short break · {longBreakDuration}
+            m long break (every {longBreakInterval} rounds)
+          </div>
           {isTaskComplete && (
             <div className="mt-2 text-xs font-medium text-success bg-success-soft px-3 py-1 rounded-full">
               Task focus goal completed ({taskFocusMinutesLogged}m / {taskTotalDurationMinutes}m)
@@ -166,9 +183,19 @@ export default function FocusTimerPage() {
         />
       </div>
 
-      {/* Footer / Context Card: Link Task & Today's Summary */}
+      {/* Footer / Context Cards: Duration Customization, Link Task & Today's Summary */}
       {!isFullscreen && (
-        <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+        <div className="w-full space-y-4 mt-4">
+          <DurationCustomizationPanel
+            focusDuration={focusDuration}
+            shortBreakDuration={shortBreakDuration}
+            longBreakDuration={longBreakDuration}
+            isSessionActive={status === 'running' || status === 'paused'}
+            onUpdateDurations={setCustomDurations}
+            onResetDefaults={resetDefaults}
+          />
+
+          <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-4">
           {/* Linked Task Selector */}
           <Card className="p-4 flex flex-col justify-between">
             <div className="flex items-center gap-2 text-xs font-semibold text-text mb-2">
@@ -218,6 +245,7 @@ export default function FocusTimerPage() {
               <Clock className="w-5 h-5" />
             </div>
           </Card>
+          </div>
         </div>
       )}
     </div>

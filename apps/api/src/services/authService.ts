@@ -134,7 +134,7 @@ export class AuthService {
         focusDuration: 25,
         shortBreakDuration: 5,
         longBreakDuration: 15,
-        longBreakInterval: 4,
+        longBreakInterval: 5,
         soundEnabled: true,
         soundVolume: 70,
         weekStartDay: 'monday',
@@ -601,6 +601,7 @@ export class AuthService {
       user.preferences = {
         ...user.preferences,
         ...input.preferences,
+        longBreakInterval: 5,
       };
     }
 

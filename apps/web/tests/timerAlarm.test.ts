@@ -15,7 +15,7 @@ describe('Timer Completion Audible Alarm Lifecycle', () => {
       focusDuration: 25,
       shortBreakDuration: 5,
       longBreakDuration: 15,
-      longBreakInterval: 4,
+      longBreakInterval: 5,
       soundEnabled: true,
       soundVolume: 75,
       alarmEnabled: true,

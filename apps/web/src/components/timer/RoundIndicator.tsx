@@ -9,12 +9,13 @@ export interface RoundIndicatorProps {
 
 export function RoundIndicator({
   completedRounds,
-  totalRounds = 4,
+  totalRounds = 5,
   currentRound,
-  longBreakInterval = 4,
+  longBreakInterval = 5,
 }: RoundIndicatorProps) {
   const displayTotal = Math.max(1, totalRounds || longBreakInterval);
   const displayRound = currentRound ?? Math.min(completedRounds + 1, displayTotal);
+  const activeStep = currentRound ? currentRound - 1 : completedRounds;
 
   return (
     <div className="flex flex-col items-center gap-2 select-none">
@@ -24,8 +25,8 @@ export function RoundIndicator({
       </div>
       <div className="flex items-center gap-2 flex-wrap justify-center max-w-xs">
         {Array.from({ length: displayTotal }).map((_, idx) => {
-          const isDone = idx < completedRounds;
-          const isCurrent = idx === completedRounds && completedRounds < displayTotal;
+          const isDone = idx < activeStep;
+          const isCurrent = idx === activeStep && activeStep < displayTotal;
 
           return (
             <div

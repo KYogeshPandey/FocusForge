@@ -30,7 +30,7 @@ const UserPreferencesSchema = new Schema<IUserPreferences>(
     focusDuration: { type: Number, default: 25 },
     shortBreakDuration: { type: Number, default: 5 },
     longBreakDuration: { type: Number, default: 15 },
-    longBreakInterval: { type: Number, default: 4 },
+    longBreakInterval: { type: Number, default: 5 },
     soundEnabled: { type: Boolean, default: true },
     soundVolume: { type: Number, default: 70 },
     alarmEnabled: { type: Boolean, default: true },
@@ -70,6 +70,9 @@ const UserSchema = new Schema<IUser>(
         ret['id'] = ret['_id']?.toString();
         if (ret['createdAt'] instanceof Date) ret['createdAt'] = ret['createdAt'].toISOString();
         if (ret['updatedAt'] instanceof Date) ret['updatedAt'] = ret['updatedAt'].toISOString();
+        if (ret['preferences'] && typeof ret['preferences'] === 'object') {
+          (ret['preferences'] as Record<string, unknown>)['longBreakInterval'] = 5;
+        }
         delete ret['_id'];
         delete ret['__v'];
         delete ret['passwordHash'];

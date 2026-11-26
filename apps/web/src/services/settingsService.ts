@@ -15,12 +15,12 @@ export interface ISettingsService {
 
 export class SettingsService implements ISettingsService {
   async get(): Promise<Settings> {
-    const raw = LocalStorageAdapter.getItem<Settings>(LocalStorageAdapter.settingsKey, {
+    const defaults: Settings = {
       theme: 'dark',
       focusDuration: 25,
       shortBreakDuration: 5,
       longBreakDuration: 15,
-      longBreakInterval: 4,
+      longBreakInterval: 5,
       soundEnabled: true,
       soundVolume: 70,
       alarmEnabled: true,
@@ -30,8 +30,13 @@ export class SettingsService implements ISettingsService {
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       demoDataLoaded: true,
       userName: 'Alex Rivera',
-    });
-    return raw;
+    };
+    const raw = LocalStorageAdapter.getItem<Partial<Settings>>(LocalStorageAdapter.settingsKey, defaults);
+    return {
+      ...defaults,
+      ...raw,
+      longBreakInterval: 5,
+    };
   }
 
   async update(input: UpdateSettingsInput): Promise<Settings> {
@@ -40,10 +45,11 @@ export class SettingsService implements ISettingsService {
     const updated: Settings = {
       ...current,
       ...validated,
+      longBreakInterval: 5,
     };
 
-    SettingsSchema.parse(updated);
-    LocalStorageAdapter.setItem(LocalStorageAdapter.settingsKey, updated);
+    const normalized = SettingsSchema.parse(updated);
+    LocalStorageAdapter.setItem(LocalStorageAdapter.settingsKey, normalized);
 
     // Apply theme changes to document
     if (updated.theme) {
@@ -59,7 +65,7 @@ export class SettingsService implements ISettingsService {
       }
     }
 
-    return updated;
+    return normalized;
   }
 
   async resetDemoData(): Promise<void> {

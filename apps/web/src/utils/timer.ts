@@ -1,5 +1,51 @@
 import type { FocusMode } from '@focusforge/shared';
 
+export const FOCUS_DURATION_PRESETS = [15, 25, 30, 45, 60, 90] as const;
+export const BREAK_DURATION_PRESETS = [5, 10, 15, 20] as const;
+export const LONG_BREAK_DURATION_PRESETS = [15, 20, 30, 45] as const;
+export const FIXED_LONG_BREAK_INTERVAL = 5;
+
+export const TIMER_DURATION_LIMITS = {
+  focus: { min: 1, max: 180, default: 25 },
+  shortBreak: { min: 1, max: 60, default: 5 },
+  longBreak: { min: 1, max: 90, default: 15 },
+} as const;
+
+export type DurationValidationResult =
+  | { valid: true; value: number }
+  | { valid: false; error: string };
+
+/**
+ * Validates a user-provided duration in minutes against allowed integer bounds.
+ */
+export function validateDurationMinutes(
+  rawValue: unknown,
+  min: number,
+  max: number,
+  unitLabel: string = 'minutes'
+): DurationValidationResult {
+  const num = typeof rawValue === 'string' ? Number(rawValue.trim()) : Number(rawValue);
+  if (
+    rawValue === '' ||
+    rawValue === null ||
+    rawValue === undefined ||
+    !Number.isFinite(num) ||
+    !Number.isInteger(num)
+  ) {
+    return {
+      valid: false,
+      error: `Enter a whole number between ${min} and ${max} ${unitLabel}.`,
+    };
+  }
+  if (num < min || num > max) {
+    return {
+      valid: false,
+      error: `Value must be between ${min} and ${max} ${unitLabel}.`,
+    };
+  }
+  return { valid: true, value: num };
+}
+
 export interface TimerRemaining {
   remainingSeconds: number;
   totalSeconds: number;
@@ -79,12 +125,13 @@ export function calculateTaskRoundPlan(
   taskTotalMinutes: number | null | undefined,
   loggedFocusMinutes: number,
   completedRounds: number,
-  defaultFocusDurationMinutes: number = 25
+  defaultFocusDurationMinutes: number = 25,
+  longBreakInterval: number = FIXED_LONG_BREAK_INTERVAL
 ): TaskRoundPlan {
   const defaultDuration = Math.max(1, defaultFocusDurationMinutes);
 
   if (!taskTotalMinutes || taskTotalMinutes <= 0) {
-    const totalRounds = 4;
+    const totalRounds = Math.max(1, longBreakInterval);
     const currentRound = (completedRounds % totalRounds) + 1;
     return {
       totalRounds,
@@ -96,22 +143,21 @@ export function calculateTaskRoundPlan(
     };
   }
 
-  const allSessions = calculateTaskSessions(taskTotalMinutes, defaultDuration);
-  const impliedCompletedRounds =
-    loggedFocusMinutes > 0 ? Math.floor(loggedFocusMinutes / defaultDuration) : 0;
-  const effectiveCompletedRounds = Math.max(completedRounds, impliedCompletedRounds);
-
+  // Preserve completed round history directly without reinterpreting logged minutes
+  // under a newly selected focus duration.
+  const effectiveCompletedRounds = Math.max(0, completedRounds);
   const remainingTaskMinutes = Math.max(0, taskTotalMinutes - loggedFocusMinutes);
 
   if (remainingTaskMinutes <= 0) {
-    const totalRounds = Math.max(effectiveCompletedRounds, allSessions.length);
+    const fallbackRounds = calculateTaskSessions(taskTotalMinutes, defaultDuration);
+    const totalRounds = Math.max(1, effectiveCompletedRounds || fallbackRounds.length);
     return {
       totalRounds,
       currentRound: totalRounds,
       currentRoundDurationMinutes: 0,
       remainingTaskMinutes: 0,
       isTaskComplete: true,
-      sessions: allSessions,
+      sessions: fallbackRounds,
     };
   }
 

@@ -404,7 +404,7 @@ export function generateSeedData() {
     focusDuration: 25,
     shortBreakDuration: 5,
     longBreakDuration: 15,
-    longBreakInterval: 4,
+    longBreakInterval: 5,
     soundEnabled: true,
     soundVolume: 70,
     alarmEnabled: true,

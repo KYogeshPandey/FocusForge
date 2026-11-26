@@ -5,7 +5,7 @@ export const UserPreferencesSchema = z.object({
   focusDuration: z.number().int().min(1).max(180).default(25),
   shortBreakDuration: z.number().int().min(1).max(60).default(5),
   longBreakDuration: z.number().int().min(1).max(90).default(15),
-  longBreakInterval: z.number().int().min(1).max(12).default(4),
+  longBreakInterval: z.number().default(5).transform(() => 5),
   soundEnabled: z.boolean().default(true),
   soundVolume: z.number().min(0).max(100).default(70),
   alarmEnabled: z.boolean().default(true),

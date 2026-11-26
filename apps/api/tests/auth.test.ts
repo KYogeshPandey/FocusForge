@@ -229,4 +229,59 @@ describe('Authentication & Session Lifecycle', () => {
     const tasksInDb = await Task.find({ userId: user.user.id });
     expect(tasksInDb).toHaveLength(0);
   });
+
+  it('normalizes legacy longBreakInterval: 4 to 5 and prevents changing fixed interval via PATCH /me', async () => {
+    const created = await createTestUser('Interval User', 'interval@test.com', 'password123');
+
+    // Simulate legacy user document in MongoDB with old longBreakInterval: 4
+    await User.updateOne(
+      { _id: created.user.id },
+      { $set: { 'preferences.longBreakInterval': 4 } }
+    );
+
+    // GET /me safely normalizes to 5 without breaking user settings or auth
+    const meRes = await request(app)
+      .get('/api/v1/auth/me')
+      .set('Authorization', `Bearer ${created.accessToken}`);
+    expect(meRes.status).toBe(200);
+    expect(meRes.body.data.preferences.longBreakInterval).toBe(5);
+
+    // PATCH /me attempting to change longBreakInterval (including legacy values 4 or 0) keeps interval fixed at 5
+    const patchRes = await request(app)
+      .patch('/api/v1/auth/me')
+      .set('Authorization', `Bearer ${created.accessToken}`)
+      .send({
+        preferences: {
+          focusDuration: 45,
+          shortBreakDuration: 10,
+          longBreakInterval: 2,
+        },
+      });
+    expect(patchRes.status).toBe(200);
+    expect(patchRes.body.data.preferences.focusDuration).toBe(45);
+    expect(patchRes.body.data.preferences.shortBreakDuration).toBe(10);
+    expect(patchRes.body.data.preferences.longBreakInterval).toBe(5);
+
+    const legacyPatchRes = await request(app)
+      .patch('/api/v1/auth/me')
+      .set('Authorization', `Bearer ${created.accessToken}`)
+      .send({
+        preferences: {
+          longBreakInterval: 0,
+        },
+      });
+    expect(legacyPatchRes.status).toBe(200);
+    expect(legacyPatchRes.body.data.preferences.longBreakInterval).toBe(5);
+
+    const updatedInDb = await User.findById(created.user.id);
+    expect(updatedInDb!.preferences.longBreakInterval).toBe(5);
+
+    // Login also returns normalized interval 5
+    const loginRes = await request(app).post('/api/v1/auth/login').send({
+      email: 'interval@test.com',
+      password: 'password123',
+    });
+    expect(loginRes.status).toBe(200);
+    expect(loginRes.body.data.user.preferences.longBreakInterval).toBe(5);
+  });
 });
